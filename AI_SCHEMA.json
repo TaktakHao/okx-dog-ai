@@ -1,0 +1,303 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OKXDogAIAnalysisResponse",
+  "description": "OKX-Dog 个人量化副驾驶大模型多周期行情研判与结构化交易决策契约",
+  "type": "object",
+  "required": [
+    "analysis_id",
+    "symbol",
+    "timestamp",
+    "market_regime",
+    "timeframe_analysis",
+    "derivatives_sentiment",
+    "signal",
+    "trade_plan",
+    "risk_assessment",
+    "reasoning_summary",
+    "reasoning_details"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "analysis_id": {
+      "type": "string",
+      "description": "研判唯一标识符，标准 UUID v4 格式，用于研判结果追踪、审计与归因分析",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "symbol": {
+      "type": "string",
+      "description": "交易标的代码，例如 'BTC-USDT-SWAP', 'ETH-USDT-SWAP'",
+      "pattern": "^[A-Z0-9]+-[A-Z0-9]+(-SWAP)?$"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "研判生成时的 Unix 毫秒时间戳 (ms)",
+      "minimum": 1700000000000
+    },
+    "market_regime": {
+      "type": "string",
+      "description": "宏观盘面结构分类：TRENDING_UP(多头趋势), TRENDING_DOWN(空头趋势), RANGING(震荡整理), VOLATILE_BREAKOUT(剧烈突破/异动)",
+      "enum": [
+        "TRENDING_UP",
+        "TRENDING_DOWN",
+        "RANGING",
+        "VOLATILE_BREAKOUT"
+      ]
+    },
+    "timeframe_analysis": {
+      "type": "object",
+      "description": "多周期技术面共振分析（15m, 1h, 4h, 1d）",
+      "required": ["tf_15m", "tf_1h", "tf_4h", "tf_1d"],
+      "additionalProperties": false,
+      "properties": {
+        "tf_15m": {
+          "$ref": "#/definitions/TimeframeDetail"
+        },
+        "tf_1h": {
+          "$ref": "#/definitions/TimeframeDetail"
+        },
+        "tf_4h": {
+          "$ref": "#/definitions/TimeframeDetail"
+        },
+        "tf_1d": {
+          "$ref": "#/definitions/TimeframeDetail"
+        }
+      }
+    },
+    "derivatives_sentiment": {
+      "type": "object",
+      "description": "衍生品与市场情绪专项研判",
+      "required": [
+        "funding_rate_bias",
+        "open_interest_interpretation",
+        "long_short_ratio_state",
+        "sentiment_score"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "funding_rate_bias": {
+          "type": "string",
+          "description": "资金费率倾向：EXTREME_POSITIVE(极端看多/费率过热风险), MODERATE_POSITIVE(健康看多), NEUTRAL(中性), MODERATE_NEGATIVE(健康看空), EXTREME_NEGATIVE(极端看空/空头挤压风险)",
+          "enum": [
+            "EXTREME_POSITIVE",
+            "MODERATE_POSITIVE",
+            "NEUTRAL",
+            "MODERATE_NEGATIVE",
+            "EXTREME_NEGATIVE"
+          ]
+        },
+        "open_interest_interpretation": {
+          "type": "string",
+          "description": "全网未平仓合约量 (OI) 异动解读，例如：'价格上涨伴随持仓量激增，主力真金白银持续加码多头' 或 '高位缩量OI下降，呈现获利盘离场与多头衰竭'"
+        },
+        "long_short_ratio_state": {
+          "type": "string",
+          "description": "多空持仓人数比与大户账户比状态分析，例如：'散户多空比高达2.3处于散户严重扎堆区间，大户多空比反向偏空，存在反向诱多洗盘风险'"
+        },
+        "sentiment_score": {
+          "type": "number",
+          "description": "衍生品综合情绪量化得分（-1.0 极度恐慌/极度看空 到 +1.0 极度贪婪/极度看多）",
+          "minimum": -1.0,
+          "maximum": 1.0
+        }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "description": "最终交易决策信号与置信度",
+      "required": ["action", "confidence", "urgency"],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "核心操作动作：BUY_LONG(做多/开多), SELL_SHORT(做空/开空), CLOSE_POSITION(平仓离场), HOLD_WAIT(空仓观望/维持现有持仓)",
+          "enum": [
+            "BUY_LONG",
+            "SELL_SHORT",
+            "CLOSE_POSITION",
+            "HOLD_WAIT"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "description": "决策置信度打分，范围 [0.0, 1.0]，反映模型综合多周期与衍生品指标的一致性强度",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "urgency": {
+          "type": "string",
+          "description": "执行紧迫度：LOW(挂单等待回调入场), MEDIUM(常规挂单/限价单), HIGH(市价即时成交/突破紧急入场或紧急止损)",
+          "enum": [
+            "LOW",
+            "MEDIUM",
+            "HIGH"
+          ]
+        }
+      }
+    },
+    "trade_plan": {
+      "type": "object",
+      "description": "建议交易计划与量化点位参数",
+      "required": [
+        "entry_range",
+        "take_profit_levels",
+        "stop_loss_price",
+        "risk_reward_ratio",
+        "suggested_leverage",
+        "order_type"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entry_range": {
+          "type": "array",
+          "description": "建议入场价格区间 [最低入场价, 最高入场价]，例如 [94500.0, 94800.0]。若为 HOLD_WAIT 可填 [0.0, 0.0]",
+          "items": {
+            "type": "number",
+            "minimum": 0.0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "take_profit_levels": {
+          "type": "array",
+          "description": "分批止盈目标点位列表，按阶段梯级排列",
+          "items": {
+            "$ref": "#/definitions/TakeProfitLevel"
+          },
+          "minItems": 1,
+          "maxItems": 4
+        },
+        "stop_loss_price": {
+          "type": "number",
+          "description": "硬止损价格。若为 HOLD_WAIT 则为 0.0",
+          "minimum": 0.0
+        },
+        "risk_reward_ratio": {
+          "type": "number",
+          "description": "理论盈亏比 (Risk-to-Reward Ratio)，计算公式为: |第一止盈目标 - 入场均价| / |止损价 - 入场均价|。若无明确交易计划填 0.0",
+          "minimum": 0.0
+        },
+        "suggested_leverage": {
+          "type": "integer",
+          "description": "建议杠杆倍数，受硬风控上限约束，通常介于 1 到 10 之间",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "order_type": {
+          "type": "string",
+          "description": "建议委托类型：LIMIT(限价单), MARKET(市价单), TRIGGER_LIMIT(条件计划限价单)",
+          "enum": [
+            "LIMIT",
+            "MARKET",
+            "TRIGGER_LIMIT"
+          ]
+        }
+      }
+    },
+    "risk_assessment": {
+      "type": "object",
+      "description": "风险评估与逻辑失效边界",
+      "required": [
+        "key_risks",
+        "invalidation_condition",
+        "max_holding_time_hours"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "key_risks": {
+          "type": "array",
+          "description": "当前决策面临的核心风险因素列表（如宏观数据公布、假突破、流动性抽干等）",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 5
+        },
+        "invalidation_condition": {
+          "type": "string",
+          "description": "交易逻辑彻底失效的明确技术形态或价格条件（如：'若15m K线实体收盘跌破93800，则多头结构被破坏，应立即止损观望'）"
+        },
+        "max_holding_time_hours": {
+          "type": "number",
+          "description": "建议最长持仓时间（小时）。超过此时长若行情未走出预期应主动平仓降低时间成本",
+          "minimum": 0.5,
+          "maximum": 720.0
+        }
+      }
+    },
+    "reasoning_summary": {
+      "type": "string",
+      "description": "精炼中文研判结论与核心逻辑摘要（150字以内，适合前端即时播报与弹窗速览）"
+    },
+    "reasoning_details": {
+      "type": "string",
+      "description": "详尽的量化逻辑推导过程，涵盖多周期共振、指标交叉验证、盘口支撑阻力分布与衍生品异动综合分析"
+    }
+  },
+  "definitions": {
+    "TimeframeDetail": {
+      "type": "object",
+      "description": "单一周期技术指标与形态研判细节",
+      "required": [
+        "trend",
+        "key_indicators_summary",
+        "support_level",
+        "resistance_level"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "trend": {
+          "type": "string",
+          "description": "周期趋势：BULLISH(多头排列/强劲上涨), BEARISH(空头排列/破位下跌), NEUTRAL_CHOPPY(均线缠绕/宽幅震荡), OVERBOUGHT(超买顶背离), OVERSOLD(超卖底背离)",
+          "enum": [
+            "BULLISH",
+            "BEARISH",
+            "NEUTRAL_CHOPPY",
+            "OVERBOUGHT",
+            "OVERSOLD"
+          ]
+        },
+        "key_indicators_summary": {
+          "type": "string",
+          "description": "该周期关键指标表现（如：'EMA20>50>200多头排列；RSI=62.4处于健康上升区；MACD零轴上方金叉红柱放量；价格沿布林带上轨运行'）"
+        },
+        "support_level": {
+          "type": "number",
+          "description": "该周期识别出的第一关键静态或动态支撑价位",
+          "minimum": 0.0
+        },
+        "resistance_level": {
+          "type": "number",
+          "description": "该周期识别出的第一关键静态或动态阻力价位",
+          "minimum": 0.0
+        }
+      }
+    },
+    "TakeProfitLevel": {
+      "type": "object",
+      "description": "分阶段止盈点位与平仓比例",
+      "required": [
+        "price",
+        "percentage",
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "price": {
+          "type": "number",
+          "description": "目标止盈价格",
+          "minimum": 0.0
+        },
+        "percentage": {
+          "type": "number",
+          "description": "该点位建议平仓的持仓比例（如 0.5 表示平仓 50%，累计比例为 1.0）",
+          "minimum": 0.01,
+          "maximum": 1.0
+        },
+        "description": {
+          "type": "string",
+          "description": "止盈依据说明（如：'TP1: 触及前高阻力位平仓50%锁定利润并移动止损至开仓价'）"
+        }
+      }
+    }
+  }
+}

@@ -33,6 +33,12 @@ try:
     from .llm_client import LLMClient, LLMInferenceError
     from .parser import RobustJSONParser, ThoughtStreamExtractor
     from .config import AIModelConfig, ai_settings
+    from .agent import (
+        QuantTraderState,
+        ThinkingStep,
+        create_quant_trader_graph,
+        QuantTraderAgentRunner,
+    )
 except ImportError:
     from okx_dog_ai.schemas import (
         MarketRegime,
@@ -64,6 +70,12 @@ except ImportError:
     from okx_dog_ai.llm_client import LLMClient, LLMInferenceError
     from okx_dog_ai.parser import RobustJSONParser, ThoughtStreamExtractor
     from okx_dog_ai.config import AIModelConfig, ai_settings
+    from okx_dog_ai.agent import (
+        QuantTraderState,
+        ThinkingStep,
+        create_quant_trader_graph,
+        QuantTraderAgentRunner,
+    )
 
 __all__ = [
     "MarketRegime",
@@ -100,4 +112,9 @@ __all__ = [
     "ThoughtStreamExtractor",
     "AIModelConfig",
     "ai_settings",
+    "QuantTraderState",
+    "ThinkingStep",
+    "create_quant_trader_graph",
+    "QuantTraderAgentRunner",
 ]
+

@@ -8,3 +8,5 @@ venv/
 *.log
 .pytest_cache/
 .DS_Store
+.antigravity_env/
+

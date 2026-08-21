@@ -16,7 +16,10 @@ from .state import QuantTraderState
 try:
     from ..schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
 except (ImportError, ValueError):
-    from okx_dog_ai.schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
+    try:
+        from okx_dog_ai.schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
+    except (ImportError, ValueError):
+        from schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
 
 logger = logging.getLogger("okx_dog.ai.agent.runner")
 

@@ -9,6 +9,9 @@ from .tools import (
     calculate_risk_reward_ratio,
     verify_hard_risk_compliance,
     derive_dynamic_atr_stops,
+    calculate_orderbook_imbalance,
+    evaluate_onchain_flow,
+    calculate_kelly_position_size,
 )
 
 __all__ = [
@@ -19,4 +22,7 @@ __all__ = [
     "calculate_risk_reward_ratio",
     "verify_hard_risk_compliance",
     "derive_dynamic_atr_stops",
+    "calculate_orderbook_imbalance",
+    "evaluate_onchain_flow",
+    "calculate_kelly_position_size",
 ]

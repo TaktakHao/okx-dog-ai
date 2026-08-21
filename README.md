@@ -1,22 +1,29 @@
 # OKX-Dog AI - 智能量化研判与大模型决策中枢
 
-OKX-Dog AI 是面向高频量化与衍生品交易的决策大脑，负责多周期量化指标计算、大模型 Structured Outputs 结构化输出协议与思维链（CoT）流式解析。
+OKX-Dog AI 是面向加密资产与 TradFi 衍生品交易的决策大脑，负责多周期量化指标计算、动态 Token 高保真压缩、Antigravity CLI / OpenAI 多模型统一驱动与思维链（CoT）流式解析。
 
-## 核心能力
+## 核心能力与技术架构
 
-1. **多周期指标实时计算 (`indicators.py`)**:
-   - 15m, 1h, 4h, 1d 多周期 EMA, MACD, RSI, Bollinger Bands, ATR, 资金费率与持仓量 (OI) 专项计算
-2. **大模型网关与协议契约 (`gateway.py` / `schemas.py`)**:
-   - 适配 OpenAI 兼容格式模型（DeepSeek-R1 / V3, GPT-4o 等）
-   - JSON Schema 契约校验 (`AI_SCHEMA.json`)，确保 100% 格式对齐
-3. **思维链流式提取 (`prompts.py` / `SYSTEM_PROMPT.md`)**:
-   - 实时解析 `<think>...</think>` 推理思维链并支持 SSE 流式推流
-4. **量化自愈与风控保护**:
-   - 模型异常时无缝降级至量化规则自愈决策，确保决策流永不中断
+1. **高保真动态 Token 压缩中枢 (`prompt_builder.py`)**:
+   - 高信息密度 Master System Prompt 结构，剔除冗余套话；
+   - 自适应价格与指标数值精度截断 (`_fmt_p`, `_fmt_pct`)，消除浮点 Token 浪费；
+   - 紧凑行式上下文序列化，在保留 100% 量化指标前提下将 Token 消耗压降 **45% ~ 60%**；
+   - P0~P3 优先级动态预算裁剪与保护机制。
+2. **Antigravity CLI 本地极速引擎与 OpenAI 协议适配 (`llm_client.py` / `antigravity_bridge.py`)**:
+   - 原生支持 Google Antigravity CLI (`agy`)，免 API Key 驱动本地极速研判；
+   - 兼容 DeepSeek-R1 (deepseek-reasoner)、DeepSeek-V3、GPT-4o、Claude 等外部网关；
+   - 进程级隔离沙盒 (`AntigravityIsolatedEnvManager`)，剔除全局无关 MCP/Skills 干扰。
+3. **多周期指标实时计算与微观特征工程 (`indicator_engine.py`)**:
+   - 15m, 1h, 4h, 1d 多周期 EMA (20/50/200), MACD, RSI, Bollinger Bands, ATR, 资金费率与全网持仓量 (OI)；
+   - 资产类别自适应识别（TradFi 黄金/白银/美股代币/RWA/加密资产）。
+4. **结构化决策契约与量化自愈保护 (`schemas.py` / `parser.py`)**:
+   - 强类型 JSON Schema 契约校验，确保 100% 格式对齐；
+   - 毫秒级思维链 `<think>...</think>` 流式捕获；
+   - 模型超时与网络异常时无缝降级至高保真量化规则算法，确保系统 7x24h 永不中断。
 
-## 快速启动
+## 快速启动与依赖
 
 ```bash
-# 1. 安装依赖
+# 安装依赖
 pip install -r requirements.txt
 ```

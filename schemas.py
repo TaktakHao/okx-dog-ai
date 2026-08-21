@@ -67,6 +67,7 @@ class TradePlanOrderType(str, Enum):
 
 class LLMProvider(str, Enum):
     """支持的大模型服务商"""
+    ANTIGRAVITY = "antigravity"
     DEEPSEEK = "deepseek"
     OPENAI = "openai"
     ANTHROPIC = "anthropic"

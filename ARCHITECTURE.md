@@ -538,8 +538,47 @@ flowchart LR
     Evaluator -->|筛选出 Realized R:R > 3.0 的典型看多/看空案例| FewShotPool[优质 Few-Shot 样本池]
     Evaluator -->|筛选出 MAE 严重超标的误判案例| AntiPatternPool[反面教材与风控提示库]
     
-    FewShotPool & AntiPatternPool --> PromptUpdater[Prompt 模板自动进化引擎]
-    PromptUpdater --> MasterPrompt[更新后的 System/User Prompt]
+---
+
+## 8. Token 高保真动态压缩中枢与 Antigravity CLI 隔离沙盒架构
+
+### 8.1 Token 预算与压缩对比
+为解决大模型在海量行情数据与长系统提示词下 Token 消耗巨大（单次 1,800+ Tokens）、延迟增加的问题，系统重构了 Prompt 组装引擎：
+
+```
+[优化前: ~1,830 Tokens]                       [优化后: ~850 Tokens] (降低 53.5%)
+┌──────────────────────────────┐              ┌──────────────────────────────┐
+│ Master System Prompt (850T)  │ ──高密度提炼─>│ 高密度精炼 System (380T)      │
+├──────────────────────────────┤              ├──────────────────────────────┤
+│ 行情与指标矩阵 (700T)        │ ──行式紧凑化─>│ 紧凑行式表达 (240T)           │
+├──────────────────────────────┤ ──自适应截断─>│                              │
+│ 浮点噪声与重复描述 (280T)    │ ──消除噪声──>│ 消除无意义小数 (130T)        │
+└──────────────────────────────┘              └──────────────────────────────┘
 ```
 
-通过这一闭环，系统每周自动从真实盘面中萃取高胜率的真实微观形态样本注入 Few-Shot 库，使 OKX-Dog 伴随市场行情演变持续进化。
+### 8.2 数值精度自适应截断与去噪算法
+- **价格与均线**：$\ge 100$ 时保留 1 位小数；$1 \sim 100$ 保留 2 位；$< 1$ 保留 4 位；
+- **资金费率与百分比**：格式化为 `+0.0080%`，剔除末尾无效 0；
+- **消除浮点噪声**：消除 Python 序列化产生的 `94650.12000000001` 等 Token 浪费。
+
+### 8.3 Antigravity CLI 隔离沙盒设计 (`AntigravityIsolatedEnvManager`)
+- 维护专属 `.antigravity_env` 目录，软链接系统认证凭据；
+- 彻底剔除宿主机全局 60+ Skills / MCP Server 注入，杜绝 System Prompt 污染；
+- 结合 `--json-schema` 原生结构化约束，输出 100% 符合 `AI_SCHEMA.json` 契约。
+
+---
+
+## 9. v3.5 AI Quant Studio & Codex Harness 策略实验室架构
+
+### 9.1 双轨物理隔离原则 (Dual-Track Isolation)
+- **实盘热路径 (Live Hot Path)**：维持毫秒级确定性执行（LangGraph + 硬风控 + OKX v5 网关），坚决不引入任何未经审计的动态代码执行。
+- **离线实验室路径 (Quant Studio)**：独立运行 Codex Agent 进程，提供代码生成、AST 语法审查与隔离子进程回测。
+
+### 9.2 核心架构组件
+1. **`strategy_base.py` (BaseQuantStrategy)**：定义统一的向量化策略基类，统一输入 DataFrame 与输出信号 Series。
+2. **`ast_guard.py` (AST Security Gate)**：基于 Python AST 静态语法树进行白名单扫描，100% 阻断 `os, sys, subprocess, socket, eval, exec` 等高危操作。
+3. **`sandbox_runner.py` (Subprocess Sandbox)**：受限子进程环境，配置 5s 看门狗超时熔断与内存隔离保护，内置保守摩擦模型（Taker 0.05% + 滑点 0.05%）。
+4. **`codex_client.py` (Self-Healing Loop)**：实现 `Prompt -> Code -> AST -> Sandbox -> Auto-Fix` 的 3 轮报错自动纠错重试闭环。
+5. **`benchmark/eval_runner.py` (Golden Dataset Suite)**：面向 500+ 极端行情典型样本的自动化批量防退化评测底座。
+
+

@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 
 try:
-    from .schemas import (
+    from schemas import (
         AIAnalysisResponse,
         TimeframeAnalysis,
         TimeframeDetail,
@@ -41,22 +41,40 @@ try:
         MarketRegime,
     )
 except ImportError:
-    from okx_dog_ai.schemas import (
-        AIAnalysisResponse,
-        TimeframeAnalysis,
-        TimeframeDetail,
-        TimeframeTrend,
-        DerivativesSentiment,
-        FundingRateBias,
-        AISignal,
-        SignalAction,
-        SignalUrgency,
-        TradePlan,
-        TakeProfitLevel,
-        TradePlanOrderType,
-        RiskAssessment,
-        MarketRegime,
-    )
+    try:
+        from .schemas import (
+            AIAnalysisResponse,
+            TimeframeAnalysis,
+            TimeframeDetail,
+            TimeframeTrend,
+            DerivativesSentiment,
+            FundingRateBias,
+            AISignal,
+            SignalAction,
+            SignalUrgency,
+            TradePlan,
+            TakeProfitLevel,
+            TradePlanOrderType,
+            RiskAssessment,
+            MarketRegime,
+        )
+    except ImportError:
+        from okx_dog_ai.schemas import (
+            AIAnalysisResponse,
+            TimeframeAnalysis,
+            TimeframeDetail,
+            TimeframeTrend,
+            DerivativesSentiment,
+            FundingRateBias,
+            AISignal,
+            SignalAction,
+            SignalUrgency,
+            TradePlan,
+            TakeProfitLevel,
+            TradePlanOrderType,
+            RiskAssessment,
+            MarketRegime,
+        )
 
 logger = logging.getLogger("okx_dog.ai.parser")
 
@@ -407,6 +425,34 @@ class RobustJSONParser:
         if "action_plan" in res and "trade_plan" not in res:
             res["trade_plan"] = res.pop("action_plan")
 
+        # 预先处理 trade_plan 中的 percentage
+        if "trade_plan" in res and isinstance(res["trade_plan"], dict):
+            tp_list = res["trade_plan"].get("take_profit_levels")
+            if isinstance(tp_list, list):
+                for item in tp_list:
+                    if isinstance(item, dict) and "percentage" in item:
+                        try:
+                            p_val = float(item["percentage"])
+                            if p_val > 1.0:
+                                item["percentage"] = round(p_val / 100.0, 4)
+                        except Exception:
+                            item["percentage"] = 0.5
+
+        # 预先处理 funding_rate_bias 模糊枚举
+        if "derivatives_sentiment" in res and isinstance(res["derivatives_sentiment"], dict):
+            bias_str = str(res["derivatives_sentiment"].get("funding_rate_bias", "")).upper()
+            if bias_str not in ["EXTREME_POSITIVE", "MODERATE_POSITIVE", "NEUTRAL", "MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
+                if "EXTREME" in bias_str and ("POS" in bias_str or "LONG" in bias_str or "OVERHEAT" in bias_str):
+                    res["derivatives_sentiment"]["funding_rate_bias"] = "EXTREME_POSITIVE"
+                elif "POS" in bias_str or "LONG" in bias_str or "BULL" in bias_str:
+                    res["derivatives_sentiment"]["funding_rate_bias"] = "MODERATE_POSITIVE"
+                elif "EXTREME" in bias_str and ("NEG" in bias_str or "SHORT" in bias_str):
+                    res["derivatives_sentiment"]["funding_rate_bias"] = "EXTREME_NEGATIVE"
+                elif "NEG" in bias_str or "SHORT" in bias_str or "BEAR" in bias_str:
+                    res["derivatives_sentiment"]["funding_rate_bias"] = "MODERATE_NEGATIVE"
+                else:
+                    res["derivatives_sentiment"]["funding_rate_bias"] = "NEUTRAL"
+
         if "rationale" in res and "reasoning_details" not in res:
             res["reasoning_details"] = res.pop("rationale")
 
@@ -447,8 +493,18 @@ class RobustJSONParser:
         deriv = res.get("derivatives_sentiment")
         if not isinstance(deriv, dict):
             deriv = {}
-        if deriv.get("funding_rate_bias") not in ["EXTREME_POSITIVE", "MODERATE_POSITIVE", "NEUTRAL", "MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
-            deriv["funding_rate_bias"] = "NEUTRAL"
+        bias_str = str(deriv.get("funding_rate_bias", "")).upper()
+        if bias_str not in ["EXTREME_POSITIVE", "MODERATE_POSITIVE", "NEUTRAL", "MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
+            if "EXTREME" in bias_str and ("POS" in bias_str or "LONG" in bias_str or "OVERHEAT" in bias_str):
+                deriv["funding_rate_bias"] = "EXTREME_POSITIVE"
+            elif "POS" in bias_str or "LONG" in bias_str or "BULL" in bias_str:
+                deriv["funding_rate_bias"] = "MODERATE_POSITIVE"
+            elif "EXTREME" in bias_str and ("NEG" in bias_str or "SHORT" in bias_str):
+                deriv["funding_rate_bias"] = "EXTREME_NEGATIVE"
+            elif "NEG" in bias_str or "SHORT" in bias_str or "BEAR" in bias_str:
+                deriv["funding_rate_bias"] = "MODERATE_NEGATIVE"
+            else:
+                deriv["funding_rate_bias"] = "NEUTRAL"
         if "open_interest_interpretation" not in deriv:
             deriv["open_interest_interpretation"] = "数据正常，中性观察"
         if "long_short_ratio_state" not in deriv:
@@ -484,9 +540,13 @@ class RobustJSONParser:
             cleaned_tpl = []
             for item in tp_levels:
                 if isinstance(item, dict):
+                    pct = float(item.get("percentage", 1.0))
+                    if pct > 1.0:
+                        pct = pct / 100.0
+                    pct = max(0.01, min(1.0, pct))
                     cleaned_tpl.append({
                         "price": float(item.get("price", 0.0)),
-                        "percentage": float(item.get("percentage", 1.0)),
+                        "percentage": round(pct, 4),
                         "description": str(item.get("description", "止盈目标")),
                     })
             tp["take_profit_levels"] = cleaned_tpl or [{"price": 0.0, "percentage": 1.0, "description": "无具体计划"}]

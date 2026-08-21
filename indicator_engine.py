@@ -25,19 +25,27 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
-    from .schemas import (
+    from schemas import (
         FundingRateBias,
         SinglePeriodIndicators,
         MultiPeriodIndicators,
         DerivativesMetrics,
     )
 except ImportError:
-    from okx_dog_ai.schemas import (
-        FundingRateBias,
-        SinglePeriodIndicators,
-        MultiPeriodIndicators,
-        DerivativesMetrics,
-    )
+    try:
+        from .schemas import (
+            FundingRateBias,
+            SinglePeriodIndicators,
+            MultiPeriodIndicators,
+            DerivativesMetrics,
+        )
+    except ImportError:
+        from okx_dog_ai.schemas import (
+            FundingRateBias,
+            SinglePeriodIndicators,
+            MultiPeriodIndicators,
+            DerivativesMetrics,
+        )
 
 logger = logging.getLogger("okx_dog.ai.indicator_engine")
 

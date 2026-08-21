@@ -43,8 +43,8 @@ async def risk_critic_node(state: QuantTraderState) -> Dict[str, Any]:
         tp_levels = trade_plan.get("take_profit_levels", [])
         leverage = int(trade_plan.get("suggested_leverage", 1))
 
-        # 1. 盈亏比与点位方向审查
-        rr_ratio, rr_err = calculate_risk_reward_ratio(
+        # 1. 净盈亏比 (扣除手续费与滑点摩擦) 与点位方向审查
+        net_rr_ratio, rr_err = calculate_risk_reward_ratio(
             action=action,
             entry_range=entry_range,
             stop_loss_price=stop_loss,
@@ -53,13 +53,13 @@ async def risk_critic_node(state: QuantTraderState) -> Dict[str, Any]:
 
         if rr_err:
             violations.append(f"点位逻辑错误: {rr_err}")
-        elif rr_ratio < 1.5:
+        elif net_rr_ratio < 1.5:
             violations.append(
-                f"理论盈亏比不足 1.5 (当前计算为 {rr_ratio:.2f})，不符合资深交易员进场底线要求"
+                f"扣除手续费与滑点摩擦后的真实净盈亏比不足 1.5 (当前计算为 {net_rr_ratio:.2f})，不符合实盘进场底线要求"
             )
         else:
-            # 回填精确校验后的盈亏比
-            trade_plan["risk_reward_ratio"] = rr_ratio
+            # 回填精确校验后的净盈亏比
+            trade_plan["risk_reward_ratio"] = net_rr_ratio
 
         # 2. 硬风控边界审查 (杠杆与最大亏损)
         entry_avg = (entry_range[0] + entry_range[1]) / 2.0 if len(entry_range) == 2 else 0.0

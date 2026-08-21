@@ -1,13 +1,14 @@
 """
-OKX-Dog 大模型统一客户端 - 兼容 OpenAI 协议的多模型适配器
+OKX-Dog 大模型统一客户端 - 兼容 Antigravity CLI 与 OpenAI 协议的多模型适配器
 模块: okx-dog-ai/llm_client.py
 
 特性:
-1. 兼容 OpenAI 标准 API 规范，支持 DeepSeek-R1 (deepseek-reasoner), DeepSeek-V3, GPT-4o, Claude 等。
-2. 支持异步非流式生成 (generate) 与异步 SSE 流式生成 (generate_stream)。
-3. 原生支持 DeepSeek-R1 reasoning_content 与 <think> 思维链增量流式捕获。
-4. 30s 响应超时控制与指数退避重试机制 (Exponential Backoff with Jitter)。
-5. 备用模型自动降级熔断切换 (Fallback Redundancy)。
+1. 深度原生集成 Google Antigravity CLI (agy)，免 API Key 驱动本地极速研判。
+2. 兼容 OpenAI 标准 API 规范，支持 DeepSeek-R1 (deepseek-reasoner), DeepSeek-V3, GPT-4o, Claude 等。
+3. 支持异步非流式生成 (generate) 与异步 SSE 流式生成 (generate_stream)。
+4. 原生支持 DeepSeek-R1 / Antigravity thinking 思维链增量流式捕获。
+5. 30s 响应超时控制与指数退避重试机制 (Exponential Backoff with Jitter)。
+6. 备用模型自动降级熔断切换 (Fallback Redundancy)。
 """
 
 from __future__ import annotations
@@ -22,9 +23,15 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 import httpx
 
 try:
-    from .config import AIModelConfig, ai_settings
+    from config import AIModelConfig, ai_settings
+    from antigravity_bridge import AntigravityBridge, antigravity_bridge
 except ImportError:
-    from okx_dog_ai.config import AIModelConfig, ai_settings
+    try:
+        from .config import AIModelConfig, ai_settings
+        from .antigravity_bridge import AntigravityBridge, antigravity_bridge
+    except ImportError:
+        from okx_dog_ai.config import AIModelConfig, ai_settings
+        from okx_dog_ai.antigravity_bridge import AntigravityBridge, antigravity_bridge
 
 logger = logging.getLogger("okx_dog.ai.llm_client")
 
@@ -39,11 +46,12 @@ class LLMInferenceError(Exception):
 
 class LLMClient:
     """
-    OpenAI 协议兼容的高可用多大模型适配器客户端
+    Antigravity CLI / OpenAI 协议兼容的高可用多大模型适配器客户端
     """
 
     def __init__(
         self,
+        provider: Optional[str] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
@@ -53,6 +61,7 @@ class LLMClient:
         max_retries: int = 3,
         fallback_config: Optional[Dict[str, Any]] = None,
     ):
+        self.provider = (provider or getattr(ai_settings, "PROVIDER", "antigravity")).lower()
         self.base_url = (base_url or ai_settings.BASE_URL).rstrip("/")
         self.api_key = api_key or ai_settings.API_KEY
         self.model = model or ai_settings.MODEL_NAME
@@ -62,7 +71,13 @@ class LLMClient:
         self.max_retries = max_retries
         self.fallback_config = fallback_config
 
-        # 初始化 HTTP 客户端连接池
+        # 如果没有配置 API_KEY 且默认是 deepseek/openai，自动将 provider 切换为 antigravity
+        if not self.api_key and self.provider in ("deepseek", "openai"):
+            if antigravity_bridge.is_available():
+                logger.info("未检测到 API Key，自动启用 Antigravity CLI 作为首选驱动引擎")
+                self.provider = "antigravity"
+
+        # 初始化 HTTP 客户端连接池 (供外部 OpenAI 兼容网关请求使用)
         self._http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout_seconds, connect=10.0),
             limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
@@ -72,6 +87,20 @@ class LLMClient:
         """关闭底层连接池"""
         if not self._http_client.is_closed:
             await self._http_client.aclose()
+
+    def _messages_to_prompt(self, messages: List[Dict[str, str]]) -> str:
+        """将 messages 列表格式化为统一的 prompt 字符串"""
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role == "system":
+                parts.append(f"【系统量化分析角色与准则】\n{content}\n")
+            elif role == "user":
+                parts.append(f"【行情数据与研判任务】\n{content}\n")
+            else:
+                parts.append(f"【历史研判参考】\n{content}\n")
+        return "\n".join(parts).strip()
 
     # =========================================================================
     # 1. 异步非流式生成 (generate)
@@ -93,6 +122,29 @@ class LLMClient:
         temp = temperature if temperature is not None else self.temperature
         tokens = max_tokens or self.max_tokens
 
+        # ---------------------------------------------------------------------
+        # 分支 A: Antigravity CLI 本地直驱模式 (免 API Key)
+        # ---------------------------------------------------------------------
+        if self.provider == "antigravity":
+            prompt = self._messages_to_prompt(messages)
+            try:
+                content, thinking, latency_ms, actual_model = await antigravity_bridge.generate(
+                    prompt=prompt,
+                    response_schema=response_schema,
+                    effort=getattr(ai_settings, "ANTIGRAVITY_EFFORT", "medium"),
+                    model=target_model if target_model != "deepseek-reasoner" else None,
+                    timeout_seconds=self.timeout_seconds or 60.0,
+                )
+                return content, thinking, latency_ms, actual_model
+            except Exception as agy_err:
+                logger.warning(f"Antigravity CLI 执行失败: {agy_err}，尝试检查备用通道...")
+                if self.fallback_config:
+                    return await self._execute_fallback(messages, response_schema, temp, tokens)
+                raise LLMInferenceError(f"Antigravity CLI 研判失败: {agy_err}") from agy_err
+
+        # ---------------------------------------------------------------------
+        # 分支 B: OpenAI 兼容 HTTP 网关模式 (DeepSeek / OpenAI / Custom)
+        # ---------------------------------------------------------------------
         start_time = time.time()
         attempt = 0
 
@@ -175,7 +227,7 @@ class LLMClient:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         异步流式生成。
-        产出事件字典:
+        产出统一事件字典:
         - {"type": "start", "model": ...}
         - {"type": "think", "delta": ...} (思维链增量)
         - {"type": "content", "delta": ...} (JSON 内容增量)
@@ -189,6 +241,65 @@ class LLMClient:
 
         yield {"type": "start", "model": target_model, "timestamp": int(start_time * 1000)}
 
+        # ---------------------------------------------------------------------
+        # 分支 A: Antigravity CLI 本地流式直驱模式
+        # ---------------------------------------------------------------------
+        if self.provider == "antigravity":
+            prompt = self._messages_to_prompt(messages)
+            full_content_chunks: List[str] = []
+            full_thinking_chunks: List[str] = []
+
+            try:
+                async for text_delta, think_delta in antigravity_bridge.generate_stream(
+                    prompt=prompt,
+                    response_schema=response_schema,
+                    effort=getattr(ai_settings, "ANTIGRAVITY_EFFORT", "medium"),
+                    model=target_model if target_model != "deepseek-reasoner" else None,
+                    timeout_seconds=self.timeout_seconds or 60.0,
+                ):
+                    if think_delta:
+                        full_thinking_chunks.append(think_delta)
+                        yield {"type": "think", "delta": think_delta}
+                    if text_delta:
+                        full_content_chunks.append(text_delta)
+                        yield {"type": "content", "delta": text_delta}
+
+                latency_ms = int((time.time() - start_time) * 1000)
+                yield {
+                    "type": "done",
+                    "full_content": "".join(full_content_chunks),
+                    "full_thinking": "".join(full_thinking_chunks),
+                    "latency_ms": latency_ms,
+                    "model": target_model,
+                }
+                return
+
+            except Exception as agy_exc:
+                logger.error("Antigravity CLI 流式执行异常: %s", str(agy_exc))
+                if self.fallback_config:
+                    try:
+                        logger.warning("Antigravity CLI 异常，触发备用模型非流式补偿...")
+                        content, thinking, latency_ms, actual_m = await self._execute_fallback(messages, response_schema, temp, tokens)
+                        if thinking:
+                            yield {"type": "think", "delta": thinking}
+                        yield {"type": "content", "delta": content}
+                        yield {
+                            "type": "done",
+                            "full_content": content,
+                            "full_thinking": thinking,
+                            "latency_ms": latency_ms,
+                            "model": actual_m,
+                        }
+                        return
+                    except Exception as fb_exc:
+                        logger.error("备用模型也发生异常: %s", str(fb_exc))
+
+                yield {"type": "error", "error": str(agy_exc)}
+                return
+
+        # ---------------------------------------------------------------------
+        # 分支 B: OpenAI 兼容 HTTP 网关流式
+        # ---------------------------------------------------------------------
         payload = self._adapt_request_payload(
             model=target_model,
             messages=messages,
@@ -208,7 +319,6 @@ class LLMClient:
                 if response.status_code != 200:
                     error_text = await response.aread()
                     logger.error("LLM 流式请求失败 (HTTP %d): %s", response.status_code, error_text.decode(errors="ignore"))
-                    # 尝试降级非流式执行
                     if self.fallback_config:
                         logger.warning("流式请求失败，尝试降级到备用模型...")
                         content, thinking, latency_ms, actual_m = await self._execute_fallback(messages, response_schema, temp, tokens)
@@ -274,7 +384,6 @@ class LLMClient:
 
         except Exception as exc:
             logger.error("LLM 流式传输异常: %s", str(exc))
-            # 降级尝试
             if self.fallback_config:
                 try:
                     logger.warning("流式异常，触发备用模型非流式补偿...")
@@ -373,19 +482,15 @@ class LLMClient:
         is_deepseek_reasoner = "reasoner" in model or "r1" in model.lower()
 
         if is_o_series:
-            # o1/o3 不支持自定义 temperature
             payload["max_completion_tokens"] = max_tokens
             payload["reasoning_effort"] = "medium"
         elif is_deepseek_reasoner:
-            # DeepSeek-R1 官方推荐 temperature 设为 0.6
             payload["temperature"] = temperature if temperature is not None else 0.6
             payload["max_tokens"] = max_tokens
         else:
             payload["temperature"] = temperature
             payload["max_tokens"] = max_tokens
 
-        # Structured Outputs 结构化输出支持
-        # 注意: 部分推理模型 (如 deepseek-reasoner) 目前可能对 response_format: json_schema 报错，因此仅对支持的模型注入
         if response_schema and not is_deepseek_reasoner:
             payload["response_format"] = {
                 "type": "json_schema",

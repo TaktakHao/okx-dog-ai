@@ -35,10 +35,16 @@ class QuantTraderState(TypedDict, total=False):
     market_regime: str
     timeframe_analysis: Dict[str, Any]
     
-    # 3. 衍生品与微观结构产物 (Node 2: DerivativesChecker)
+    # 3. 区块链链上巨鲸资金产物 (Node 2: OnChainAnalyst)
+    onchain_analysis: Dict[str, Any]
+    
+    # 4. 量化统计与微观结构产物 (Node 3: QuantModeler)
+    quant_features: Dict[str, Any]
+    
+    # 5. 衍生品与微观情绪产物 (Node 4: DerivativesChecker)
     derivatives_sentiment: Dict[str, Any]
     
-    # 4. 交易策略与点位规划初稿 (Node 3: StrategyPlanner)
+    # 6. 交易策略与点位规划初稿 (Node 5: StrategyPlanner)
     signal: Dict[str, Any]
     trade_plan: Dict[str, Any]
     risk_assessment: Dict[str, Any]

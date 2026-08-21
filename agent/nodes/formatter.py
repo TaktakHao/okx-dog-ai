@@ -30,17 +30,30 @@ try:
         TradePlan,
     )
 except (ImportError, ValueError):
-    from okx_dog_ai.schemas import (
-        AIAnalysisResponse,
-        AISignal,
-        DerivativesSentiment,
-        MarketRegime,
-        RiskAssessment,
-        TakeProfitLevel,
-        TimeframeAnalysis,
-        TimeframeDetail,
-        TradePlan,
-    )
+    try:
+        from okx_dog_ai.schemas import (
+            AIAnalysisResponse,
+            AISignal,
+            DerivativesSentiment,
+            MarketRegime,
+            RiskAssessment,
+            TakeProfitLevel,
+            TimeframeAnalysis,
+            TimeframeDetail,
+            TradePlan,
+        )
+    except (ImportError, ValueError):
+        from schemas import (
+            AIAnalysisResponse,
+            AISignal,
+            DerivativesSentiment,
+            MarketRegime,
+            RiskAssessment,
+            TakeProfitLevel,
+            TimeframeAnalysis,
+            TimeframeDetail,
+            TradePlan,
+        )
 
 logger = logging.getLogger("okx_dog.ai.agent.formatter")
 

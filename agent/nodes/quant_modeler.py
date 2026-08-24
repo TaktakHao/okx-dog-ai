@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict
 
+from ..registry import BaseSpecialist, register_specialist
 from ..state import QuantTraderState, ThinkingStep
 from ..tools import (
     calculate_kelly_position_size,
@@ -23,6 +24,17 @@ from ..tools import (
 )
 
 logger = logging.getLogger("okx_dog.ai.agent.quant_modeler")
+
+
+@register_specialist
+class QuantModelerSpecialist(BaseSpecialist):
+    name = "quant_modeler"
+    stage_name = "量化统计与盘口微观建模"
+    layer = "perception"
+    description = "分析订单簿前5档失衡比、波动率挤压与半凯利动态头寸管理"
+
+    async def analyze(self, state: QuantTraderState) -> Dict[str, Any]:
+        return await quant_modeler_node(state)
 
 
 async def quant_modeler_node(state: QuantTraderState) -> Dict[str, Any]:
@@ -60,7 +72,7 @@ async def quant_modeler_node(state: QuantTraderState) -> Dict[str, Any]:
         bb_lower = current_price * 0.98
         bb_mid = current_price
 
-    is_squeezed, bandwidth, squeeze_msg = check_volatility_squeeze(
+    is_squeezed, bandwidth_pct, squeeze_msg = check_volatility_squeeze(
         bb_upper=bb_upper,
         bb_lower=bb_lower,
         bb_middle=bb_mid,
@@ -68,51 +80,43 @@ async def quant_modeler_node(state: QuantTraderState) -> Dict[str, Any]:
         current_price=current_price,
     )
 
-    if is_squeezed:
-        volatility_regime = "SQUEEZE_COMPRESSION"
-    elif bandwidth > 0.05:
-        volatility_regime = "VOLATILITY_EXPANSION"
-    else:
-        volatility_regime = "NORMAL_STABLE"
-
-    # 3. 多因子胜率期望建模 (结合盘口失衡、动量与波动率特征)
-    base_win_rate = 0.58
-    # 盘口买卖失衡增益
+    # 3. 推算期望胜率与凯利仓位
+    base_win_rate = 0.55
     if imbalance_ratio > 1.3:
-        imbalance_bonus = min(0.08, (imbalance_ratio - 1.0) * 0.05)
+        base_win_rate += 0.08
     elif imbalance_ratio < 0.7:
-        imbalance_bonus = max(-0.08, (imbalance_ratio - 1.0) * 0.05)
-    else:
-        imbalance_bonus = 0.0
+        base_win_rate -= 0.08
 
-    expected_win_rate = round(min(0.75, max(0.45, base_win_rate + imbalance_bonus)), 2)
-    expected_rr = 1.85
+    expected_win_rate = round(max(0.35, min(0.78, base_win_rate)), 2)
+    expected_rr = 1.8
 
-    # 4. 凯利仓位与风险敞口规划
-    risk_usdt, kelly_pos_pct, kelly_desc = calculate_kelly_position_size(
+    suggested_risk_usdt, kelly_fraction, kelly_desc = calculate_kelly_position_size(
         win_rate=expected_win_rate,
         reward_risk_ratio=expected_rr,
         account_balance_usdt=account_balance,
         max_risk_pct=0.05,
+        fractional_kelly=0.5,
     )
 
+    # 4. 组装量化特征字典
     quant_features = {
         "orderbook_imbalance_ratio": imbalance_ratio,
-        "orderbook_interpretation": ob_desc,
-        "volatility_regime": volatility_regime,
+        "orderbook_desc": ob_desc,
         "is_volatility_squeezed": is_squeezed,
+        "bollinger_bandwidth": bandwidth_pct,
+        "squeeze_status_message": squeeze_msg,
         "expected_win_rate": expected_win_rate,
         "expected_rr_ratio": expected_rr,
-        "suggested_risk_usdt": risk_usdt,
-        "suggested_risk_pct": kelly_pos_pct,
+        "suggested_risk_usdt": suggested_risk_usdt,
+        "suggested_position_pct": round(kelly_fraction * 100, 2),
         "kelly_rationale": kelly_desc,
     }
 
+    # 5. 生成专业量化思考链
     thought_text = (
-        f"【量化统计与微观结构建模】完成：盘口失衡比={imbalance_ratio:.2f} ({ob_desc})；"
-        f"波动率体制={volatility_regime}；"
-        f"模型预估胜率期望={expected_win_rate*100:.0f}%, 盈亏比={expected_rr:.2f}；"
-        f"{kelly_desc}。"
+        f"【量化微观结构与统计建模】盘口微观失衡比={imbalance_ratio:.2f} ({ob_desc})。\n"
+        f"波动率挤压检验: {'触发挤压(警惕假突破)' if is_squeezed else '波动率正常'} (布林带宽={bandwidth_pct*100:.2f}%)。\n"
+        f"多因子胜率期望={expected_win_rate*100:.0f}%。{kelly_desc}"
     )
 
     thinking_step: ThinkingStep = {

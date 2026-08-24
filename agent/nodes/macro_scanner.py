@@ -14,9 +14,21 @@ import logging
 import time
 from typing import Any, Dict
 
+from ..registry import BaseSpecialist, register_specialist
 from ..state import QuantTraderState, ThinkingStep
 
 logger = logging.getLogger("okx_dog.ai.agent.macro_scanner")
+
+
+@register_specialist
+class MacroTrendScannerSpecialist(BaseSpecialist):
+    name = "macro_scanner"
+    stage_name = "宏观多周期共振扫描"
+    layer = "perception"
+    description = "自上而下分析 1D/4H/1H/15M 多周期均线排列、指标强弱与关键供需位"
+
+    async def analyze(self, state: QuantTraderState) -> Dict[str, Any]:
+        return await macro_trend_scan_node(state)
 
 
 def _analyze_single_tf(tf_name: str, ind: Dict[str, Any], current_price: float) -> Dict[str, Any]:
@@ -64,7 +76,7 @@ async def macro_trend_scan_node(state: QuantTraderState) -> Dict[str, Any]:
     """
     LangGraph Node: 宏观多周期共振扫描
     """
-    logger.info("执行 Node 1: 宏观多周期共振扫描...")
+    logger.info("执行 Node: 宏观多周期共振扫描...")
     now_ms = int(time.time() * 1000)
     current_price = float(state.get("current_price", 0.0))
     raw_snapshot = state.get("market_snapshot", {})
@@ -113,8 +125,6 @@ async def macro_trend_scan_node(state: QuantTraderState) -> Dict[str, Any]:
         else:
             market_regime = "RANGING"
 
-
-    # 生成思考链轨迹
     thought_text = (
         f"【宏观多周期共振扫描】完成：当前标的现价 {current_price}。"
         f"1D大趋势={tf_1d_trend}, 4H中期结构={tf_4h_trend}, 1H波段={tf_1h_trend}。"

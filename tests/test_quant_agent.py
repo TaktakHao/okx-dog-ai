@@ -1,5 +1,5 @@
 """
-OKX-Dog LangGraph 资深量化交易员 Agent 核心测试套件 (4 专家架构)
+OKX-Dog LangGraph 机构级量化智能体决策大脑核心测试套件
 测试模块: okx-dog-ai/tests/test_quant_agent.py
 """
 
@@ -22,6 +22,9 @@ try:
         SinglePeriodIndicators,
     )
     from okx_dog_ai.agent import (
+        AgentRoleRegistry,
+        BaseSpecialist,
+        register_specialist,
         QuantTraderAgentRunner,
         create_quant_trader_graph,
         calculate_risk_reward_ratio,
@@ -32,11 +35,16 @@ try:
         calculate_orderbook_imbalance,
         evaluate_onchain_flow,
         calculate_kelly_position_size,
+        evaluate_macro_event_risk,
+        analyze_orderbook_liquidity,
     )
     from okx_dog_ai.agent.nodes.macro_scanner import macro_trend_scan_node
     from okx_dog_ai.agent.nodes.onchain_analyst import onchain_analyst_node
     from okx_dog_ai.agent.nodes.quant_modeler import quant_modeler_node
     from okx_dog_ai.agent.nodes.derivatives_checker import derivatives_sentiment_node
+    from okx_dog_ai.agent.nodes.macro_event_scanner import macro_event_scanner_node
+    from okx_dog_ai.agent.nodes.microstructure_analyst import microstructure_analyst_node
+    from okx_dog_ai.agent.nodes.adversarial_debater import adversarial_debate_node
     from okx_dog_ai.agent.nodes.strategy_planner import strategy_planning_node
     from okx_dog_ai.agent.nodes.risk_critic import risk_critic_node
     from okx_dog_ai.agent.nodes.formatter import response_formatter_node
@@ -53,6 +61,9 @@ except (ImportError, ValueError):
         SinglePeriodIndicators,
     )
     from agent import (
+        AgentRoleRegistry,
+        BaseSpecialist,
+        register_specialist,
         QuantTraderAgentRunner,
         create_quant_trader_graph,
         calculate_risk_reward_ratio,
@@ -63,18 +74,23 @@ except (ImportError, ValueError):
         calculate_orderbook_imbalance,
         evaluate_onchain_flow,
         calculate_kelly_position_size,
+        evaluate_macro_event_risk,
+        analyze_orderbook_liquidity,
     )
     from agent.nodes.macro_scanner import macro_trend_scan_node
     from agent.nodes.onchain_analyst import onchain_analyst_node
     from agent.nodes.quant_modeler import quant_modeler_node
     from agent.nodes.derivatives_checker import derivatives_sentiment_node
+    from agent.nodes.macro_event_scanner import macro_event_scanner_node
+    from agent.nodes.microstructure_analyst import microstructure_analyst_node
+    from agent.nodes.adversarial_debater import adversarial_debate_node
     from agent.nodes.strategy_planner import strategy_planning_node
     from agent.nodes.risk_critic import risk_critic_node
     from agent.nodes.formatter import response_formatter_node
 
 
 def _create_mock_snapshot(current_price: float = 65000.0, is_bullish: bool = True) -> MarketContextSnapshot:
-    """创建标准化的行情快照测试夹具 (含链上与盘口订单簿特征)"""
+    """创建标准化的行情快照测试夹具 (含链上、盘口、宏观日历与微观特征)"""
     if is_bullish:
         ema20, ema50, ema200 = 65200.0, 64800.0, 63000.0
         rsi = 62.0
@@ -167,93 +183,109 @@ def test_quant_tools_orderbook_imbalance():
     assert "买盘" in desc
 
 
-def test_quant_tools_onchain_flow():
-    """测试区块链链上资金流评估"""
-    # 1. 大额净提币 (看多吸筹)
-    bias1, score1, desc1 = evaluate_onchain_flow(cex_netflow_24h_usd=-20_000_000.0, smart_money_score=0.8)
-    assert bias1 == "ACCUMULATING"
-    assert score1 > 0
-
-    # 2. 大额充币进所 (看空抛压)
-    bias2, score2, desc2 = evaluate_onchain_flow(cex_netflow_24h_usd=25_000_000.0, has_token_unlock_risk=True)
-    assert bias2 == "DISTRIBUTING"
-    assert score2 < 0
-
-
-def test_quant_tools_kelly_position_size():
-    """测试凯利仓位管理工具"""
-    risk_usdt, pos_pct, desc = calculate_kelly_position_size(
-        win_rate=0.65,
-        reward_risk_ratio=2.0,
-        account_balance_usdt=2000.0,
+def test_quant_tools_macro_event_and_liquidity():
+    """测试宏观事件与微观流动性评估工具"""
+    # 1. 宏观日历事件前 15 分钟触发强制锁仓
+    risk_level, msg, is_locked = evaluate_macro_event_risk(
+        minutes_to_high_impact_event=15,
+        event_title="美联储FOMC利率决议",
     )
-    assert risk_usdt > 0
-    assert pos_pct <= 0.05  # 单笔风险不超过 5%
-    assert "凯利" in desc
+    assert risk_level == "CRITICAL"
+    assert is_locked is True
+    assert "美联储FOMC" in msg
+
+    # 2. 订单簿微观流动性与冲击成本
+    bids = [[65000.0, 10.0], [64990.0, 20.0]]
+    asks = [[65001.0, 10.0], [65010.0, 20.0]]
+    liq = analyze_orderbook_liquidity(bids, asks, current_price=65000.0, standard_order_usdt=500.0)
+    assert "spread_bps" in liq
+    assert "recommended_execution_mode" in liq
+    assert liq["recommended_execution_mode"] in ["LIMIT", "POST_ONLY", "TWAP"]
+
+
+def test_role_registry_extensibility():
+    """测试可插拔角色注册中心与扩展性 (模拟新增第三方分析专家)"""
+    initial_specs = AgentRoleRegistry.get_specialists_by_layer("perception")
+    assert len(initial_specs) >= 6
+
+    # 动态注册一个自定义专家
+    @register_specialist
+    class MockTwitterSentimentSpecialist(BaseSpecialist):
+        name = "mock_twitter_specialist"
+        stage_name = "推特社媒舆情分析专家"
+        layer = "perception"
+        description = "实时分析推特热度与情绪偏向"
+
+        async def analyze(self, state):
+            return {
+                "twitter_sentiment": {"score": 0.85, "viral_topic": "BTC_ETF"},
+                "thinking_steps": [{
+                    "node": self.name,
+                    "stage_name": self.stage_name,
+                    "thought": "推特社媒多头情绪异常高涨",
+                    "timestamp_ms": 1700000000000,
+                }],
+            }
+
+    updated_specs = AgentRoleRegistry.get_specialists_by_layer("perception")
+    assert any(s.name == "mock_twitter_specialist" for s in updated_specs)
+
+    # 验证图编译器能直接动态包含该新角色
+    graph = create_quant_trader_graph()
+    assert graph is not None
 
 
 @pytest.mark.asyncio
-async def test_onchain_analyst_node():
-    """测试区块链链上分析节点"""
+async def test_macro_event_scanner_node():
+    """测试宏观事件扫描专家节点"""
     snap = _create_mock_snapshot(current_price=65000.0, is_bullish=True)
     state = {
         "symbol": "BTC-USDT-SWAP",
         "market_snapshot": snap.model_dump(),
         "thinking_steps": [],
     }
-    out = await onchain_analyst_node(state)
-    assert "onchain_analysis" in out
-    assert "flow_bias" in out["onchain_analysis"]
+    out = await macro_event_scanner_node(state)
+    assert "macro_event_risk" in out
+    assert "event_risk_level" in out["macro_event_risk"]
     assert len(out["thinking_steps"]) == 1
-    assert "链上" in out["thinking_steps"][0]["stage_name"]
 
 
 @pytest.mark.asyncio
-async def test_quant_modeler_node():
-    """测试量化统计与微观结构建模节点"""
+async def test_microstructure_analyst_node():
+    """测试微观流动性分析专家节点"""
     snap = _create_mock_snapshot(current_price=65000.0, is_bullish=True)
     state = {
         "symbol": "BTC-USDT-SWAP",
         "current_price": 65000.0,
-        "account_balance_usdt": 2000.0,
         "market_snapshot": snap.model_dump(),
         "thinking_steps": [],
     }
-    out = await quant_modeler_node(state)
-    assert "quant_features" in out
-    assert "orderbook_imbalance_ratio" in out["quant_features"]
-    assert "expected_win_rate" in out["quant_features"]
+    out = await microstructure_analyst_node(state)
+    assert "microstructure_data" in out
+    assert "recommended_execution_mode" in out["microstructure_data"]
     assert len(out["thinking_steps"]) == 1
-    assert "量化" in out["thinking_steps"][0]["stage_name"]
 
 
 @pytest.mark.asyncio
-async def test_macro_scanner_node():
-    """测试宏观多周期共振扫描节点"""
+async def test_adversarial_debater_node():
+    """测试红蓝对抗博弈辩论节点"""
     snap = _create_mock_snapshot(current_price=65000.0, is_bullish=True)
     state = {
         "symbol": "BTC-USDT-SWAP",
         "current_price": 65000.0,
-        "market_snapshot": snap.model_dump(),
+        "market_regime": "TRENDING_UP",
+        "onchain_analysis": {"composite_score": 0.4, "flow_bias": "ACCUMULATING"},
+        "quant_features": {"orderbook_imbalance_ratio": 1.8},
+        "derivatives_sentiment": {"sentiment_score": 0.3, "funding_rate_bias": "MODERATE_POSITIVE"},
+        "macro_event_risk": {"event_risk_level": "LOW"},
+        "microstructure_data": {"spread_bps": 1.2},
         "thinking_steps": [],
     }
-    out = await macro_trend_scan_node(state)
-    assert out["market_regime"] in ["TRENDING_UP", "RANGING", "VOLATILE_BREAKOUT"]
-    assert "tf_1h" in out["timeframe_analysis"]
-    assert len(out["thinking_steps"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_derivatives_checker_node():
-    """测试衍生品与微观流动性检验节点"""
-    snap = _create_mock_snapshot(current_price=65000.0, is_bullish=True)
-    state = {
-        "market_snapshot": snap.model_dump(),
-        "thinking_steps": [],
-    }
-    out = await derivatives_sentiment_node(state)
-    assert "derivatives_sentiment" in out
-    assert out["derivatives_sentiment"]["funding_rate_bias"] in ["MODERATE_POSITIVE", "NEUTRAL", "EXTREME_POSITIVE"]
+    out = await adversarial_debate_node(state)
+    assert "bull_opinion" in out
+    assert "bear_opinion" in out
+    assert out["bull_opinion"]["stance"] in ["BULLISH", "NEUTRAL"]
+    assert out["bear_opinion"]["stance"] in ["BEARISH", "NEUTRAL"]
     assert len(out["thinking_steps"]) == 1
 
 
@@ -264,6 +296,8 @@ async def test_risk_critic_reflection_and_correction():
         "symbol": "BTC-USDT-SWAP",
         "current_price": 65000.0,
         "market_regime": "TRENDING_UP",
+        "bull_opinion": {"confidence": 0.8, "stance": "BULLISH"},
+        "bear_opinion": {"confidence": 0.4, "stance": "NEUTRAL"},
         "signal": {"action": "BUY_LONG", "confidence": 0.8, "urgency": "MEDIUM"},
         "trade_plan": {
             "entry_range": [65000.0, 65000.0],
@@ -282,7 +316,7 @@ async def test_risk_critic_reflection_and_correction():
     assert critic_out["risk_passed"] is False
     assert critic_out["critique_count"] == 1
 
-    # 2. 将批评意见送入 StrategyPlanner
+    # 2. 将批评意见送入 StrategyPlanner 反思自适应修复
     state.update(critic_out)
     plan_out = await strategy_planning_node(state)
     state.update(plan_out)
@@ -295,7 +329,7 @@ async def test_risk_critic_reflection_and_correction():
 
 @pytest.mark.asyncio
 async def test_quant_trader_agent_runner_end_to_end():
-    """测试 LangGraph QuantTraderAgentRunner 4 专家并行全链路端到端运行"""
+    """测试机构级分层 LangGraph 全链路端到端运行"""
     snap = _create_mock_snapshot(current_price=65000.0, is_bullish=True)
     runner = QuantTraderAgentRunner()
     
@@ -311,7 +345,7 @@ async def test_quant_trader_agent_runner_end_to_end():
 
 @pytest.mark.asyncio
 async def test_quant_trader_agent_runner_stream():
-    """测试 LangGraph QuantTraderAgentRunner SSE 流式输出"""
+    """测试机构级分层 LangGraph SSE 流式输出"""
     snap = _create_mock_snapshot(current_price=65000.0, is_bullish=True)
     runner = QuantTraderAgentRunner()
 

@@ -1,11 +1,12 @@
 """
-交易策略规划与多因子融合决策节点 (StrategyPlanner)
+首席量化仲裁官与多因子策略规划中枢 (StrategyPlanner)
 模块: okx-dog-ai/agent/nodes/strategy_planner.py
+角色: 首席量化仲裁官 (Chief Quantitative Arbiter)
 
 职责:
-1. 综合四方专家分析结果：宏观技术面 (Macro)、区块链链上资金 (OnChain)、量化微观盘口 (Quant)、衍生品情绪 (Derivatives)。
-2. 进行多因子共振打分与假突破/诱多防范：当链上大额充币或盘口卖压严重时，自动收敛为防守观望。
-3. 基于 15M ATR、供需结构与凯利模型精准规划入场区间、硬止损价及梯级止盈目标。
+1. 综合六方感知专家（技术共振、链上资金、量化微观、衍生品情绪、宏观日历、订单簿流动性）与红蓝对抗博弈陈述。
+2. 计算多智能体共识分 (Consensus Score 0~100) 与准入红线判定 (>=75 准做多, <=35 准做空)。
+3. 结合 15M ATR、微观流动性冲击与半凯利模型精准规划入场区间、硬止损价及梯级止盈目标。
 4. 严格感知反思批评反馈 (Risk Critique)：若上一轮风控审查被拦截，依据批评意见自适应修正点位与盈亏比。
 """
 
@@ -23,22 +24,25 @@ logger = logging.getLogger("okx_dog.ai.agent.strategy_planner")
 
 async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
     """
-    LangGraph Node: 交易策略规划与多因子融合决策 (含反思自适应修复能力与摩擦修正)
+    LangGraph Node: 首席量化仲裁与多因子融合决策规划
     """
-    logger.info("执行 Node: 交易策略规划与多因子融合决策...")
+    logger.info("执行 Node: 首席量化仲裁与多因子融合决策规划...")
     now_ms = int(time.time() * 1000)
     current_price = float(state.get("current_price", 0.0))
     macro_regime = state.get("market_regime", "RANGING")
-    tf_analysis = state.get("timeframe_analysis", {})
     deriv_sentiment = state.get("derivatives_sentiment", {})
     onchain_data = state.get("onchain_analysis", {})
     quant_data = state.get("quant_features", {})
+    macro_event = state.get("macro_event_risk", {})
+    micro_data = state.get("microstructure_data", {})
+    bull_opinion = state.get("bull_opinion", {})
+    bear_opinion = state.get("bear_opinion", {})
     risk_critique = state.get("risk_critique")
     critique_count = state.get("critique_count", 0)
     risk_limits = state.get("risk_limits", {})
     max_allowed_leverage = int(risk_limits.get("max_leverage", 5))
 
-    # 1. 提取技术面 15m ATR 与布林带指标
+    # 1. 提取技术面 15m ATR 与布林带
     raw_snapshot = state.get("market_snapshot", {})
     multi_ind = raw_snapshot.get("multi_indicators", {})
     if hasattr(multi_ind, "indicators"):
@@ -59,7 +63,7 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         bb_lower = current_price * 0.98
         bb_mid = current_price
 
-    # 2. 提取各专家研判特征
+    # 2. 提取各专家研判特征与红蓝对抗意见
     is_squeezed, bandwidth, squeeze_msg = check_volatility_squeeze(
         bb_upper=bb_upper,
         bb_lower=bb_lower,
@@ -70,71 +74,93 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
 
     deriv_score = float(deriv_sentiment.get("sentiment_score", 0.0))
     fr_bias = deriv_sentiment.get("funding_rate_bias", "NEUTRAL")
-
     onchain_bias = onchain_data.get("flow_bias", "NEUTRAL")
     onchain_score = float(onchain_data.get("composite_score", 0.0))
     cex_netflow = float(onchain_data.get("cex_netflow_24h_usd", 0.0))
     has_unlock_risk = bool(onchain_data.get("has_token_unlock_risk", False))
-
     imbalance_ratio = float(quant_data.get("orderbook_imbalance_ratio", 1.0))
     expected_win_rate = float(quant_data.get("expected_win_rate", 0.58))
     kelly_desc = quant_data.get("kelly_rationale", "")
+    event_risk_level = macro_event.get("event_risk_level", "LOW")
+    is_event_lockout = bool(macro_event.get("is_lockout_active", False))
+    recommended_order_type = micro_data.get("recommended_execution_mode", "LIMIT")
 
-    # 3. 多因子动态置信度与动作裁决 (宏观 + 链上资金 + 量化微观 + 衍生品)
-    # 防御规则 A: 波动率挤压假突破防御
-    if is_squeezed and macro_regime == "VOLATILE_BREAKOUT":
+    bull_conf = float(bull_opinion.get("confidence", 0.5))
+    bull_stance = bull_opinion.get("stance", "NEUTRAL")
+    bear_conf = float(bear_opinion.get("confidence", 0.5))
+    bear_stance = bear_opinion.get("stance", "NEUTRAL")
+
+    # 3. 首席量化仲裁：计算多智能体共识分 (Consensus Score 0~100)
+    consensus_score = 50
+    if bull_stance == "BULLISH":
+        consensus_score += int(bull_conf * 25)
+    if bear_stance == "BEARISH":
+        consensus_score -= int(bear_conf * 25)
+    if onchain_score > 0.2:
+        consensus_score += int(onchain_score * 15)
+    elif onchain_score < -0.2:
+        consensus_score -= int(abs(onchain_score) * 15)
+    if imbalance_ratio > 1.3:
+        consensus_score += 8
+    elif imbalance_ratio < 0.7:
+        consensus_score -= 8
+
+    # 宏观高危风险惩罚
+    if event_risk_level in ["HIGH", "CRITICAL"]:
+        consensus_score = int(consensus_score * 0.7)
+
+    consensus_score = max(5, min(95, consensus_score))
+
+    # 4. 动作判定与准入红线审查
+    action = "HOLD_WAIT"
+    confidence = 0.50
+    urgency = "LOW"
+    strategy_rationale = ""
+    is_approved_by_arbiter = False
+
+    if is_event_lockout:
+        action = "HOLD_WAIT"
+        confidence = 0.30
+        urgency = "LOW"
+        strategy_rationale = f"触发宏观高危事件锁 ({macro_event.get('diagnostic_summary', '敏感窗口')})，强制全局观望"
+    elif is_squeezed and macro_regime == "VOLATILE_BREAKOUT":
         action = "HOLD_WAIT"
         confidence = 0.50
         urgency = "LOW"
         strategy_rationale = f"触发波动率挤压保护: {squeeze_msg}，收敛为防守观望"
-    # 防御规则 B: 链上巨额充币/解锁 假多头防御
     elif macro_regime == "TRENDING_UP" and (cex_netflow > 15_000_000 or has_unlock_risk or onchain_score <= -0.4):
         action = "HOLD_WAIT"
         confidence = 0.55
         urgency = "LOW"
-        strategy_rationale = f"检测到链上大额充币/抛压风险 (CEX净流入=${cex_netflow/1e6:.1f}M, 链上评分={onchain_score:+.2f})，警惕诱多洗盘，转换为观望防守"
-    # 防御规则 C: 衍生品极度过热防御
+        strategy_rationale = f"检测到链上大额充币/抛压风险 (CEX净流入=${cex_netflow/1e6:.1f}M)，警惕诱多洗盘"
     elif macro_regime == "TRENDING_UP" and fr_bias == "EXTREME_POSITIVE" and deriv_score > 0.6:
         action = "HOLD_WAIT"
-        confidence = round(0.58 + min(0.12, abs(deriv_score - 0.5) * 0.3), 2)
+        confidence = 0.58
         urgency = "LOW"
         strategy_rationale = "衍生品资金费率极度过热，多头杠杆拥挤，防范踩踏插针"
-    # 做多信号
-    elif macro_regime == "TRENDING_UP":
+    elif consensus_score >= 70 or macro_regime == "TRENDING_UP":
         action = "BUY_LONG"
-        # 链上与量化多因子加分
-        onchain_bonus = min(0.08, max(0.0, onchain_score * 0.08))
-        imbalance_bonus = min(0.06, max(0.0, (imbalance_ratio - 1.0) * 0.05))
-        deriv_bonus = min(0.05, max(0.0, deriv_score * 0.05))
-        confidence = round(min(0.92, 0.74 + onchain_bonus + imbalance_bonus + deriv_bonus), 2)
+        confidence = round(min(0.92, 0.72 + (consensus_score - 50) * 0.004), 2)
         urgency = "MEDIUM"
-        strategy_rationale = f"宏观多头结构 + 链上资金偏好({onchain_bias}) + 盘口深度买单支撑({imbalance_ratio:.2f})"
-    # 防御规则 D: 极度负费率逼空防御
-    elif macro_regime == "TRENDING_DOWN" and fr_bias == "EXTREME_NEGATIVE":
-        action = "HOLD_WAIT"
-        confidence = round(0.58 + min(0.12, abs(deriv_score - 0.5) * 0.3), 2)
-        urgency = "LOW"
-        strategy_rationale = "极度负费率，警惕空头踩踏逼空"
-    # 做空信号
-    elif macro_regime == "TRENDING_DOWN":
+        is_approved_by_arbiter = True
+        strategy_rationale = (
+            f"多智能体共识做多 (共识分={consensus_score}/100) + 链上资金偏好({onchain_bias}) + 盘口支撑({imbalance_ratio:.2f})"
+        )
+    elif consensus_score <= 35 or macro_regime == "TRENDING_DOWN":
         action = "SELL_SHORT"
-        onchain_bonus = min(0.08, max(0.0, abs(onchain_score) * 0.08)) if onchain_score < 0 else 0.0
-        imbalance_bonus = min(0.06, max(0.0, (1.0 - imbalance_ratio) * 0.05)) if imbalance_ratio < 1.0 else 0.0
-        confidence = round(min(0.92, 0.74 + onchain_bonus + imbalance_bonus), 2)
+        confidence = round(min(0.92, 0.72 + (50 - consensus_score) * 0.004), 2)
         urgency = "MEDIUM"
-        strategy_rationale = f"宏观空头破位 + 链上筹码松动({onchain_bias}) + 盘口卖盘压制"
-    elif macro_regime == "VOLATILE_BREAKOUT":
-        action = "BUY_LONG" if (deriv_score + onchain_score) >= 0 else "SELL_SHORT"
-        confidence = round(min(0.88, 0.72 + abs(deriv_score + onchain_score) * 0.1), 2)
-        urgency = "HIGH"
-        strategy_rationale = "剧烈异动放量突破"
+        is_approved_by_arbiter = True
+        strategy_rationale = (
+            f"多智能体共识做空 (共识分={consensus_score}/100) + 空头破位({onchain_bias}) + 盘口压制"
+        )
     else:
         action = "HOLD_WAIT"
         confidence = 0.55
         urgency = "LOW"
-        strategy_rationale = "盘面处于区间震荡，多空博弈均衡，等待右侧破位信号"
+        strategy_rationale = f"首席仲裁共识分 ({consensus_score}/100) 未达准入红线 (≥70 或 ≤35)，保持观望"
 
-    # 4. 基础止损与止盈点位推导 (ATR 乘数 + 摩擦修正)
+    # 5. 点位规划推导 (ATR 乘数 + 摩擦与反思修正)
     atr_multiplier = 1.8
     stop_loss, tp1, tp2 = derive_dynamic_atr_stops(
         current_price=current_price,
@@ -143,7 +169,6 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         multiplier=atr_multiplier,
     )
 
-    # 预留 0.15% 的双边手续费与滑点缓冲
     friction_buffer = current_price * 0.0015
 
     if action == "BUY_LONG":
@@ -177,7 +202,7 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         leverage = 1
         rr_calc = 1.5
 
-    # 5. 组装 TradePlan 与 RiskAssessment
+    # 6. 组装 TradePlan 与 RiskAssessment
     if action in ["BUY_LONG", "SELL_SHORT"]:
         take_profit_list = [
             {
@@ -206,16 +231,16 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         "stop_loss_price": stop_loss,
         "risk_reward_ratio": rr_calc,
         "suggested_leverage": min(leverage, max_allowed_leverage),
-        "order_type": "LIMIT",
+        "order_type": recommended_order_type if recommended_order_type in ["LIMIT", "POST_ONLY"] else "LIMIT",
     }
 
     key_risks = [
-        "美联储宏观数据公布引发的突发流动性插针风险",
-        "大盘 BTC 假突破引发的山寨币联动暴跌",
-        "链上大户集中充提币引发的突发流动性滑点",
+        f"宏观日历事件扰动 ({macro_event.get('event_title') or '常规日历'})",
+        "大盘 BTC 假突破引发的联动剧烈插针",
+        "链上大户集中充提币引发的流动性滑点",
     ]
     if action == "BUY_LONG":
-        invalidation = f"15M 收线跌破 {stop_loss} 支撑位，结构彻底破坏"
+        invalidation = f"15M 收线跌破 {stop_loss} 支撑位，多头逻辑证伪"
     elif action == "SELL_SHORT":
         invalidation = f"15M 收线站稳 {stop_loss} 阻力位，空头逻辑证伪"
     else:
@@ -235,38 +260,41 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
 
     if action in ["BUY_LONG", "SELL_SHORT"]:
         summary = (
-            f"盘面判定为【{macro_regime}】，建议操作【{action}】(置信度 {confidence * 100:.0f}%)。"
+            f"首席仲裁共识分【{consensus_score}/100】，判定操作【{action}】(置信度 {confidence * 100:.0f}%)。"
             f"入场区间 [{entry_low}, {entry_high}]，硬止损 {stop_loss}，第一目标位 {tp1}，理论盈亏比 {rr_calc}。"
         )
     else:
         summary = (
-            f"盘面判定为【{macro_regime}】，建议操作【HOLD_WAIT 观望】(置信度 {confidence * 100:.0f}%)。"
-            f"{strategy_rationale}。关注区间 [{entry_low}, {entry_high}]，建议空仓等待确定性信号。"
+            f"首席仲裁共识分【{consensus_score}/100】，建议操作【HOLD_WAIT 观望】(置信度 {confidence * 100:.0f}%)。"
+            f"{strategy_rationale}。建议空仓等待确定性右侧信号。"
         )
 
     details = (
-        f"1. 宏观技术面: 4H处于{macro_regime}结构，多周期指标协同；\n"
+        f"1. 宏观技术面: 4H处于{macro_regime}体制，多周期指标协同；\n"
         f"2. 区块链链上面: 资金流态势为【{onchain_bias}】(得分 {onchain_score:+.2f})，CEX净流向 ${cex_netflow/1e6:+.2f}M；\n"
         f"3. 量化微观结构: 盘口前5档买卖比为 {imbalance_ratio:.2f}，模型胜率期望 {expected_win_rate*100:.0f}%；\n"
         f"4. 衍生品情绪: 资金费率{fr_bias}，情绪量化得分 {deriv_score}；\n"
-        f"5. 点位与仓位: 基于 15M ATR ({atr14:.2f}) 设定动态止盈止损 (净盈亏比 {rr_calc} >= 1.5)，{kelly_desc}。"
+        f"5. 宏观与流动性: 宏观事件风险【{event_risk_level}】，推荐订单模式【{recommended_order_type}】；\n"
+        f"6. 红蓝对抗辩论: 多头置信度 {bull_conf*100:.0f}%, 空头红队置信度 {bear_conf*100:.0f}% -> 综合共识分 {consensus_score}/100；\n"
+        f"7. 点位与仓位: 基于 15M ATR ({atr14:.2f}) 设定动态止盈止损 (净盈亏比 {rr_calc} >= 1.5)，{kelly_desc}。"
     )
 
-    thought_prefix = f"【反思轮次 #{critique_count} 调整点位】" if risk_critique else "【多因子量化融合策略规划】"
+    thought_prefix = f"【反思轮次 #{critique_count} 调整点位】" if risk_critique else "【首席量化仲裁与策略规划】"
     thought_text = (
-        f"{thought_prefix} 生成策略：Action={action}, 杠杆={trade_plan['suggested_leverage']}x, "
-        f"入场区间={trade_plan['entry_range']}, 止损={stop_loss}, TP1={tp1}, 理论盈亏比={rr_calc}。"
-        f"结合链上资金面({onchain_bias})与盘口微观失衡比({imbalance_ratio:.2f})。"
+        f"{thought_prefix} 仲裁共识分={consensus_score}/100, 决策 Action={action}, 杠杆={trade_plan['suggested_leverage']}x, "
+        f"入场区间={trade_plan['entry_range']}, 止损={stop_loss}, TP1={tp1}, 盈亏比={rr_calc}, 执行模式={trade_plan['order_type']}。"
     )
 
     thinking_step: ThinkingStep = {
         "node": "StrategyPlanner",
-        "stage_name": "交易策略规划与多因子融合",
+        "stage_name": "首席量化仲裁与策略规划",
         "thought": thought_text,
         "timestamp_ms": now_ms,
     }
 
     return {
+        "consensus_score": consensus_score,
+        "is_approved_by_arbiter": is_approved_by_arbiter,
         "signal": signal,
         "trade_plan": trade_plan,
         "risk_assessment": risk_assessment,

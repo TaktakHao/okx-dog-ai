@@ -1,6 +1,14 @@
 """
-OKX-Dog LangGraph 资深量化交易员图编排与状态机构建器
+OKX-Dog LangGraph 资深量化交易员分层图编排与状态机构建器
 模块: okx-dog-ai/agent/graph.py
+角色: 多智能体交易协同架构师 (agency-multi-agent-systems-architect)
+
+分层决策拓扑:
+1. 感知层 (Perception Layer): 动态加载注册表中所有感知专家 (Fan-Out 并行执行)
+2. 对抗层 (Adversarial Layer): 红蓝对抗博弈辩论 (Fan-In 汇聚)
+3. 仲裁规划层 (Arbitration Layer): 首席量化仲裁与多因子 ATR 点位规划
+4. 风控审计层 (Risk & Reflection Layer): 硬风控审查与自适应反思回退回路
+5. 契约格式化层 (Formatting Layer): 标准契约收敛与思维链输出 -> END
 """
 
 from __future__ import annotations
@@ -11,14 +19,12 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
 from .nodes import (
-    derivatives_sentiment_node,
-    macro_trend_scan_node,
-    onchain_analyst_node,
-    quant_modeler_node,
+    adversarial_debate_node,
     response_formatter_node,
     risk_critic_node,
     strategy_planning_node,
 )
+from .registry import AgentRoleRegistry
 from .state import QuantTraderState
 
 logger = logging.getLogger("okx_dog.ai.agent.graph")
@@ -27,7 +33,7 @@ logger = logging.getLogger("okx_dog.ai.agent.graph")
 def route_after_risk_critic(state: QuantTraderState) -> Literal["strategy_planner", "formatter"]:
     """
     风控审查后的条件边路由：
-    - 若审查未通过 (risk_passed == False)，带着批评意见回退到 strategy_planner 重新优化点位；
+    - 若审查未通过 (risk_passed == False)，带着批评意见回退到 strategy_planner 重新自适应优化点位；
     - 若审查通过 (risk_passed == True)，流转至 formatter 封装最终契约。
     """
     risk_passed = state.get("risk_passed", True)
@@ -40,36 +46,44 @@ def route_after_risk_critic(state: QuantTraderState) -> Literal["strategy_planne
 
 def create_quant_trader_graph() -> StateGraph:
     """
-    创建并编译 OKX-Dog 资深量化交易员 StateGraph 决策图 (4 专家并行研判 + 反思回路)
+    创建并编译 OKX-Dog 机构级量化交易员 StateGraph 分层决策状态机
     """
     builder = StateGraph(QuantTraderState)
 
-    # 1. 注册核心节点
-    builder.add_node("macro_scanner", macro_trend_scan_node)
-    builder.add_node("onchain_analyst", onchain_analyst_node)
-    builder.add_node("quant_modeler", quant_modeler_node)
-    builder.add_node("derivatives_checker", derivatives_sentiment_node)
+    # 1. 从注册中心动态获取感知层专家 (Perception Layer)
+    perception_specialists = AgentRoleRegistry.get_specialists_by_layer("perception")
+    if not perception_specialists:
+        raise RuntimeError("AgentRoleRegistry 中未发现任何已注册的感知层专家！")
+
+    perception_node_names = []
+    for spec in perception_specialists:
+        node_name = spec.name
+        builder.add_node(node_name, spec.get_node_function())
+        perception_node_names.append(node_name)
+        logger.info("已将感知层专家节点 [%s] 并入决策图", node_name)
+
+    # 2. 注册对抗层、仲裁规划层、风控层与格式化层节点
+    builder.add_node("adversarial_debater", adversarial_debate_node)
     builder.add_node("strategy_planner", strategy_planning_node)
     builder.add_node("risk_critic", risk_critic_node)
     builder.add_node("formatter", response_formatter_node)
 
-    # 2. 编排 4 专家并行分发与汇聚 (Fan-Out / Fan-In)
-    # START 并行分发至 4 大分析专家
-    builder.add_edge(START, "macro_scanner")
-    builder.add_edge(START, "onchain_analyst")
-    builder.add_edge(START, "quant_modeler")
-    builder.add_edge(START, "derivatives_checker")
+    # 3. 编排感知层并行分发 (Fan-Out)
+    # START 并行流向所有已注册的感知专家
+    for node_name in perception_node_names:
+        builder.add_edge(START, node_name)
 
-    # 4 大专家研判产物汇聚至策略规划与多因子融合中枢
-    builder.add_edge("macro_scanner", "strategy_planner")
-    builder.add_edge("onchain_analyst", "strategy_planner")
-    builder.add_edge("quant_modeler", "strategy_planner")
-    builder.add_edge("derivatives_checker", "strategy_planner")
+    # 4. 感知层产物汇聚至红蓝对抗博弈中枢 (Fan-In)
+    for node_name in perception_node_names:
+        builder.add_edge(node_name, "adversarial_debater")
 
-    # 3. 策略规划流转至硬风控审查
+    # 5. 红蓝对抗辩论产物流转至首席量化仲裁与规划中枢
+    builder.add_edge("adversarial_debater", "strategy_planner")
+
+    # 6. 策略规划流转至硬风控审查
     builder.add_edge("strategy_planner", "risk_critic")
 
-    # 4. 编排硬风控反思条件边 (Critic & Reflection Loop)
+    # 7. 编排硬风控反思条件边 (Critic & Reflection Loop)
     builder.add_conditional_edges(
         "risk_critic",
         route_after_risk_critic,
@@ -79,10 +93,10 @@ def create_quant_trader_graph() -> StateGraph:
         },
     )
 
-    # 5. 终结边
+    # 8. 终结边
     builder.add_edge("formatter", END)
 
-    # 6. 编译执行图
+    # 9. 编译执行图
     graph = builder.compile()
-    logger.info("OKX-Dog LangGraph 4 专家并行决策状态机成功编译完成")
+    logger.info("OKX-Dog LangGraph 机构级分层决策状态机成功编译完成 (感知专家数=%d)", len(perception_node_names))
     return graph

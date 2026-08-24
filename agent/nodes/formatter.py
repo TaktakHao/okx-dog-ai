@@ -1,11 +1,12 @@
 """
 契约模型格式化与思维链收敛节点 (ResponseFormatter)
 模块: okx-dog-ai/agent/nodes/formatter.py
+角色: 契约与思维链收敛官
 
 职责:
-1. 将 StateGraph 全生命周期的所有研判与反思产物严格组装为符合 AIAnalysisResponse 标准契约的对象。
-2. 将多阶段 ThinkingStep 渲染为结构清晰的 Markdown/CoT 思考轨迹。
-3. 计算总执行延迟并标记使用的 Agent 架构。
+1. 将 StateGraph 全生命周期的所有研判（6 专家感知 + 红蓝对抗 + 首席仲裁 + 硬风控审查）严格组装为符合 AIAnalysisResponse 标准契约的对象。
+2. 将全链路 ThinkingStep 渲染为专业级分层 Markdown/CoT 思考轨迹。
+3. 计算总执行延迟并标记使用的 Multi-Agent 架构版本。
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ async def response_formatter_node(state: QuantTraderState) -> Dict[str, Any]:
     """
     LangGraph Node: 契约模型格式化与思维链收敛
     """
-    logger.info("执行 Node 5: 契约模型格式化与思维链收敛...")
+    logger.info("执行 Node: 契约模型格式化与思维链收敛...")
     now_ms = int(time.time() * 1000)
     start_ts = state.get("timestamp", now_ms)
     latency_ms = max(1, now_ms - start_ts)
@@ -151,7 +152,7 @@ async def response_formatter_node(state: QuantTraderState) -> Dict[str, Any]:
     # 6. 整合思维链步骤为完整思考文本
     steps = state.get("thinking_steps", [])
     thinking_lines = ["<think>"]
-    thinking_lines.append("### 【OKX-Dog LangGraph 资深量化交易员认知推导流】")
+    thinking_lines.append("### 【OKX-Dog 机构级多智能体量化决策推导流】")
     for s in steps:
         thinking_lines.append(f"\n#### [{s.get('stage_name', s.get('node'))}]")
         thinking_lines.append(s.get("thought", ""))
@@ -159,7 +160,7 @@ async def response_formatter_node(state: QuantTraderState) -> Dict[str, Any]:
     full_thinking_process = "\n".join(thinking_lines)
 
     # 7. 实例化生产契约对象
-    model_name = state.get("llm_config", {}).get("model_name") or "langgraph-quant-agent-v1"
+    model_name = state.get("llm_config", {}).get("model_name") or "okx-dog-multi-agent-v2"
 
     response = AIAnalysisResponse(
         analysis_id=analysis_id,
@@ -172,7 +173,7 @@ async def response_formatter_node(state: QuantTraderState) -> Dict[str, Any]:
         trade_plan=trade_plan,
         risk_assessment=risk_assessment,
         reasoning_summary=state.get("reasoning_summary", "量化研判完成"),
-        reasoning_details=state.get("reasoning_details", "多周期共振与硬风控校验通过"),
+        reasoning_details=state.get("reasoning_details", "多周期共振、红蓝辩论与硬风控校验通过"),
         model_used=model_name,
         latency_ms=latency_ms,
         thinking_process=full_thinking_process,

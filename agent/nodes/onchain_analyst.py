@@ -15,10 +15,22 @@ import logging
 import time
 from typing import Any, Dict
 
+from ..registry import BaseSpecialist, register_specialist
 from ..state import QuantTraderState, ThinkingStep
 from ..tools import evaluate_onchain_flow
 
 logger = logging.getLogger("okx_dog.ai.agent.onchain_analyst")
+
+
+@register_specialist
+class OnChainAnalystSpecialist(BaseSpecialist):
+    name = "onchain_analyst"
+    stage_name = "区块链链上资金与巨鲸行为分析"
+    layer = "perception"
+    description = "分析 CEX 24h 净充提流向、巨鲸聪明钱动向与代币解锁稀释风险"
+
+    async def analyze(self, state: QuantTraderState) -> Dict[str, Any]:
+        return await onchain_analyst_node(state)
 
 
 async def onchain_analyst_node(state: QuantTraderState) -> Dict[str, Any]:
@@ -63,40 +75,36 @@ async def onchain_analyst_node(state: QuantTraderState) -> Dict[str, Any]:
         )
     )
 
-    # 2. 调用量化工具评估链上格局
-    flow_bias, composite_score, summary_desc = evaluate_onchain_flow(
+    # 2. 运行专业链上资金量化评估
+    flow_bias, composite_score, verdict_desc = evaluate_onchain_flow(
         cex_netflow_24h_usd=cex_netflow_usd,
         whale_activity_score=whale_score,
         smart_money_score=smart_money_score,
         has_token_unlock_risk=has_unlock_risk,
     )
 
-    # 3. 巨鲸大额持仓沉淀状态归纳
-    if flow_bias == "ACCUMULATING":
-        whale_status = "巨鲸地址呈现净提币囤币行为，链上抛压处于低位"
-    elif flow_bias == "DISTRIBUTING":
-        whale_status = "巨鲸向交易所归集筹码，存在潜在集中抛售风险"
-    else:
-        whale_status = "链上大户持仓相对稳定，未见异常异动"
-
+    # 3. 组装链上研判结果字典
     onchain_analysis = {
         "flow_bias": flow_bias,
         "composite_score": composite_score,
         "cex_netflow_24h_usd": cex_netflow_usd,
-        "whale_status": whale_status,
+        "whale_activity_score": whale_score,
+        "smart_money_score": smart_money_score,
         "has_token_unlock_risk": has_unlock_risk,
-        "summary_desc": summary_desc,
+        "verdict_description": verdict_desc,
     }
 
+    # 4. 生成专业级思考链
     thought_text = (
-        f"【区块链链上资金监测】完成 ({symbol})：资金流态势={flow_bias} (量化评分={composite_score:+.2f})。"
-        f"{whale_status}。CEX净流向: ${cex_netflow_usd/1e6:+.2f}M。"
-        f"{'⚠️ 存在近期大额代币解锁风险' if has_unlock_risk else '无高危解锁风险'}。"
+        f"【区块链链上资金研判】标的: {symbol}，资金流态势: 【{flow_bias}】(得分 {composite_score:+.2f})。\n"
+        f"核心特征: CEX 24h 净流向 ${cex_netflow_usd/1e6:+.2f}M, "
+        f"巨鲸活跃度 {whale_score:+.2f}, 聪明钱态度 {smart_money_score:+.2f}, 解锁风险={has_unlock_risk}。\n"
+        f"链上结论: {verdict_desc}"
     )
 
     thinking_step: ThinkingStep = {
         "node": "OnChainAnalyst",
-        "stage_name": "区块链链上资金与巨鲸监测",
+        "stage_name": "区块链链上资金与巨鲸行为分析",
         "thought": thought_text,
         "timestamp_ms": now_ms,
     }

@@ -1,5 +1,5 @@
 """
-OKX-Dog 量化交易员专用量化与风控计算工具箱
+OKX-Dog 量化交易员专用量化与风控计算工具箱 (专业机构级工具库)
 模块: okx-dog-ai/agent/tools.py
 """
 
@@ -174,10 +174,6 @@ def calculate_orderbook_imbalance(
     """
     计算订单簿买卖深度失衡度 (Orderbook Depth Imbalance Ratio)。
     公式: Imbalance = Total Bids Volume / (Total Asks Volume + 1e-6)
-    返回: (imbalance_ratio, qualitative_interpretation)
-    - imbalance > 1.3: 买盘挂单厚度明显占优，具备短线多头支撑
-    - imbalance < 0.7: 卖盘挂单沉重，上方抛压聚集
-    - 0.7 <= imbalance <= 1.3: 盘口挂单博弈均衡
     """
     if not bids or not asks:
         return 1.0, "订单簿深度数据暂不可用，按中性 1.0 评估"
@@ -216,18 +212,17 @@ def evaluate_onchain_flow(
     """
     量化评估区块链链上资金流向与巨鲸行为。
     返回: (flow_bias, composite_score, summary_desc)
-    - composite_score: -1.0 (极度看空/大额出货抛压) ~ +1.0 (极度看多/巨鲸强势吸筹)
     """
     score = 0.0
 
     # 1. 交易所净流入流出贡献
-    if cex_netflow_24h_usd < -10_000_000:  # 提币净流出 > 1000 万 USD (筹码沉淀入冷钱包)
+    if cex_netflow_24h_usd < -10_000_000:
         score += 0.4
         flow_str = f"CEX 24h 呈大额净提币流出 (${abs(cex_netflow_24h_usd)/1e6:.1f}M)，现货筹码沉淀显著"
     elif cex_netflow_24h_usd < -2_000_000:
         score += 0.2
         flow_str = f"CEX 24h 呈温和净提币 (${abs(cex_netflow_24h_usd)/1e6:.1f}M)"
-    elif cex_netflow_24h_usd > 10_000_000:  # 充币净流入 > 1000 万 USD (预示潜在集中抛压)
+    elif cex_netflow_24h_usd > 10_000_000:
         score -= 0.45
         flow_str = f"CEX 24h 呈现大额充币流入 (+${cex_netflow_24h_usd/1e6:.1f}M)，警惕主力现货集中抛盘"
     elif cex_netflow_24h_usd > 2_000_000:
@@ -269,12 +264,6 @@ def calculate_kelly_position_size(
 ) -> Tuple[float, float, str]:
     """
     基于半凯利公式 (Half-Kelly Criterion) 计算最优单笔名义仓位与风险敞口。
-    凯利公式: f* = (p * b - q) / b
-    其中:
-      p = 胜率 (win_rate)
-      q = 败率 (1 - win_rate)
-      b = 盈亏比 (reward_risk_ratio)
-    返回: (suggested_risk_usdt, suggested_position_pct, rationale)
     """
     if win_rate <= 0 or reward_risk_ratio <= 0:
         return 0.0, 0.0, "参数异常，保持 0 仓位"
@@ -287,7 +276,6 @@ def calculate_kelly_position_size(
     if kelly_f <= 0:
         return 0.0, 0.0, f"在当前胜率 ({p*100:.1f}%) 与盈亏比 ({b:.2f}) 下数学期望为负，凯利建议空仓观望"
 
-    # 使用半凯利以平滑波动，并受最大单笔风险约束
     adjusted_f = min(max_risk_pct, kelly_f * fractional_kelly)
     risk_usdt = round(account_balance_usdt * adjusted_f, 2)
     pos_pct = round(adjusted_f * 100, 2)
@@ -298,3 +286,120 @@ def calculate_kelly_position_size(
     )
     return risk_usdt, adjusted_f, desc
 
+
+# =========================================================================
+# 【新增专业工具 1】全球宏观日历与突发事件驱动评估工具
+# =========================================================================
+
+def evaluate_macro_event_risk(
+    minutes_to_high_impact_event: Optional[int] = None,
+    event_title: Optional[str] = None,
+    news_sentiment_avg: float = 0.0,
+    has_breaking_black_swan: bool = False,
+) -> Tuple[str, str, bool]:
+    """
+    评估宏观日历事件敏感窗口与全网快讯突发风险。
+    返回: (event_risk_level, diagnostic_summary, is_lockout_active)
+    - event_risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'
+    - is_lockout_active: 是否激活防插针交易锁（强制锁仓观望）
+    """
+    if has_breaking_black_swan:
+        return (
+            "CRITICAL",
+            "⚠️ 检测到突发黑天鹅/系统性突发监管利空事件，激活全局一票否决安全锁，强制观望防守！",
+            True,
+        )
+
+    # 处于美联储 FOMC / CPI / 非农重大数据发布前 30 分钟或发布后 15 分钟内
+    if minutes_to_high_impact_event is not None:
+        if 0 <= minutes_to_high_impact_event <= 30:
+            return (
+                "CRITICAL",
+                f"🚨 距重大宏观事件【{event_title or '重磅宏观数据'}】仅剩 {minutes_to_high_impact_event} 分钟，"
+                f"流动性极易发生双向巨额插针，激活事件前强制冷静锁仓机制！",
+                True,
+            )
+        elif 30 < minutes_to_high_impact_event <= 120:
+            return (
+                "HIGH",
+                f"距重大宏观事件【{event_title or '重磅宏观数据'}】约 {minutes_to_high_impact_event} 分钟，"
+                f"建议严格缩减头寸敞口并调紧止损距离。",
+                False,
+            )
+
+    if news_sentiment_avg < -0.4:
+        return (
+            "MEDIUM",
+            f"全网最新快讯情绪偏悲观 (平均情感得分: {news_sentiment_avg:+.2f})，需警惕短期突发空头情绪宣泄。",
+            False,
+        )
+    elif news_sentiment_avg > 0.4:
+        return (
+            "LOW",
+            f"全网快讯情绪积极乐观 (平均情感得分: {news_sentiment_avg:+.2f})，宏观流动性环境良好。",
+            False,
+        )
+
+    return ("LOW", "宏观日历与突发舆情平稳，暂无重大高危风险窗口。", False)
+
+
+# =========================================================================
+# 【新增专业工具 2】微观流动性与订单簿冲击成本评估工具
+# =========================================================================
+
+def analyze_orderbook_liquidity(
+    bids: Optional[List[List[float]]],
+    asks: Optional[List[List[float]]],
+    current_price: float,
+    standard_order_usdt: float = 1000.0,
+    depth_levels: int = 20,
+) -> Dict[str, Any]:
+    """
+    微观流动性与订单簿冲击成本评估工具。
+    计算买卖前 20 档的有效深度、价差 (Spread) 与预期滑点，推导最优订单执行路由模式。
+    """
+    if not bids or not asks or current_price <= 0:
+        return {
+            "spread_bps": 1.0,
+            "bid_liquidity_depth_usdt": 50000.0,
+            "ask_liquidity_depth_usdt": 50000.0,
+            "estimated_impact_bps": 2.0,
+            "recommended_execution_mode": "LIMIT",
+            "execution_advice": "盘口数据暂不可用，采用标准限价委托 (LIMIT)",
+        }
+
+    best_bid = float(bids[0][0])
+    best_ask = float(asks[0][0])
+    spread = max(0.0, best_ask - best_bid)
+    spread_bps = round((spread / current_price) * 10000.0, 2)  # 基点 (bps)
+
+    top_bids = bids[:depth_levels]
+    top_asks = asks[:depth_levels]
+
+    bid_depth_usdt = sum(float(r[0]) * float(r[1]) for r in top_bids if len(r) >= 2)
+    ask_depth_usdt = sum(float(r[0]) * float(r[1]) for r in top_asks if len(r) >= 2)
+
+    # 预估名义金额的冲击成本 (基点)
+    avg_side_depth = max(100.0, (bid_depth_usdt + ask_depth_usdt) / 2.0)
+    impact_ratio = min(0.05, standard_order_usdt / avg_side_depth)
+    estimated_impact_bps = round(max(0.5, impact_ratio * 100.0 * spread_bps), 2)
+
+    # 推导推荐执行模式
+    if spread_bps > 5.0 or estimated_impact_bps > 10.0:
+        exec_mode = "TWAP"
+        advice = f"盘口价差偏大 ({spread_bps:.1f} bps) 或流动性偏薄，建议采用 TWAP 算法分批挂单以降低冲击成本。"
+    elif spread_bps <= 1.5:
+        exec_mode = "POST_ONLY"
+        advice = f"盘口极其紧凑 ({spread_bps:.1f} bps)，流动性充沛，建议使用 Post-Only 被动做市挂单赚取手续费返佣并消除滑点。"
+    else:
+        exec_mode = "LIMIT"
+        advice = f"盘口流动性适中 (价差 {spread_bps:.1f} bps)，采用标准区间 LIMIT 限价单挂单。"
+
+    return {
+        "spread_bps": spread_bps,
+        "bid_liquidity_depth_usdt": round(bid_depth_usdt, 2),
+        "ask_liquidity_depth_usdt": round(ask_depth_usdt, 2),
+        "estimated_impact_bps": estimated_impact_bps,
+        "recommended_execution_mode": exec_mode,
+        "execution_advice": advice,
+    }

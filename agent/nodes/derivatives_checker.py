@@ -14,16 +14,28 @@ import logging
 import time
 from typing import Any, Dict
 
+from ..registry import BaseSpecialist, register_specialist
 from ..state import QuantTraderState, ThinkingStep
 
 logger = logging.getLogger("okx_dog.ai.agent.derivatives_checker")
+
+
+@register_specialist
+class DerivativesCheckerSpecialist(BaseSpecialist):
+    name = "derivatives_checker"
+    stage_name = "衍生品情绪与持仓量检验"
+    layer = "perception"
+    description = "分析资金费率过热度、全网持仓量(OI)异动与多空持仓比情绪"
+
+    async def analyze(self, state: QuantTraderState) -> Dict[str, Any]:
+        return await derivatives_sentiment_node(state)
 
 
 async def derivatives_sentiment_node(state: QuantTraderState) -> Dict[str, Any]:
     """
     LangGraph Node: 衍生品与微观流动性检验
     """
-    logger.info("执行 Node 2: 衍生品与微观流动性检验...")
+    logger.info("执行 Node: 衍生品与微观流动性检验...")
     now_ms = int(time.time() * 1000)
     raw_snapshot = state.get("market_snapshot", {})
     deriv_data = raw_snapshot.get("derivatives", {})
@@ -58,43 +70,50 @@ async def derivatives_sentiment_node(state: QuantTraderState) -> Dict[str, Any]:
     if oi_change_pct > 8.0:
         oi_desc = f"全网 OI 24h 激增 +{oi_change_pct:.1f}%，主力资金正在大规模主动建仓，波动率即将剧烈放大"
     elif oi_change_pct < -8.0:
-        oi_desc = f"全网 OI 24h 显著下降 {oi_change_pct:.1f}%，表明行情主驱动力为平仓/止损踩踏，趋势延续性减弱"
+        oi_desc = f"全网 OI 24h 剧减 {oi_change_pct:.1f}%，主力平仓离场，当前行情多为减仓驱动"
+    elif oi_change_pct > 2.0:
+        oi_desc = f"全网 OI 24h 稳步增加 +{oi_change_pct:.1f}%，增量资金缓慢注入"
     else:
-        oi_desc = f"全网 OI 变动平稳 ({oi_change_pct:+.1f}%)，持仓量处于正常波动区间"
+        oi_desc = f"全网 OI 保持平稳 ({oi_change_pct:+.1f}%)"
 
-    # 3. 多空持仓比与情绪评分推导
-    if long_short_ratio > 1.6:
-        ls_state = f"散户多空比为 {long_short_ratio:.2f}，散户多头高度拥挤，大户持仓比为 {top_trader_ratio:.2f}"
-        raw_sentiment = 0.4
-    elif long_short_ratio < 0.7:
-        ls_state = f"散户多空比为 {long_short_ratio:.2f}，空头情绪极浓，大户持仓比为 {top_trader_ratio:.2f}"
-        raw_sentiment = -0.4
+    # 3. 多空持仓状态
+    if long_short_ratio > 1.8:
+        ls_desc = f"散户多空比高达 {long_short_ratio:.2f}，散户极度看多，易成主力猎杀对象"
+    elif long_short_ratio < 0.6:
+        ls_desc = f"散户多空比低至 {long_short_ratio:.2f}，散户极度看空，易被轧空"
     else:
-        ls_state = f"散户多空比为 {long_short_ratio:.2f}，大户持仓比为 {top_trader_ratio:.2f}，筹码结构较为均衡"
-        raw_sentiment = 0.0
+        ls_desc = f"多空人数比为 {long_short_ratio:.2f}，筹码结构处于合理博弈态"
 
-    if fr_bias in ["EXTREME_POSITIVE", "MODERATE_POSITIVE"]:
-        raw_sentiment += 0.3
-    elif fr_bias in ["EXTREME_NEGATIVE", "MODERATE_NEGATIVE"]:
-        raw_sentiment -= 0.3
+    # 4. 综合情绪评分
+    sentiment_score = 0.0
+    if fr_bias in ["MODERATE_POSITIVE", "EXTREME_POSITIVE"]:
+        sentiment_score += 0.4 if fr_bias == "MODERATE_POSITIVE" else -0.3
+    elif fr_bias in ["MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
+        sentiment_score -= 0.4 if fr_bias == "MODERATE_NEGATIVE" else -0.3
 
-    sentiment_score = round(max(-1.0, min(1.0, raw_sentiment)), 2)
+    if oi_change_pct > 3.0:
+        sentiment_score += 0.3
+
+    sentiment_score = round(max(-1.0, min(1.0, sentiment_score)), 2)
 
     derivatives_sentiment = {
+        "funding_rate": funding_rate,
         "funding_rate_bias": fr_bias,
+        "funding_rate_desc": fr_desc,
         "open_interest_interpretation": oi_desc,
-        "long_short_ratio_state": ls_state,
+        "long_short_ratio_state": ls_desc,
         "sentiment_score": sentiment_score,
     }
 
     thought_text = (
-        f"【衍生品与微观流动性检验】完成：资金费率倾向={fr_bias} ({fr_desc})；"
-        f"持仓量={oi_desc}；综合情绪量化得分={sentiment_score}。"
+        f"【衍生品情绪与持仓量检验】资金费率={funding_rate * 100:+.4f}% ({fr_bias})，"
+        f"全网OI 24h变化={oi_change_pct:+.2f}%，多空人数比={long_short_ratio:.2f}。"
+        f"微观情绪评分: {sentiment_score:+.2f}。研判: {fr_desc}；{oi_desc}"
     )
 
     thinking_step: ThinkingStep = {
         "node": "DerivativesChecker",
-        "stage_name": "衍生品与微观流动性检验",
+        "stage_name": "衍生品情绪与持仓量检验",
         "thought": thought_text,
         "timestamp_ms": now_ms,
     }

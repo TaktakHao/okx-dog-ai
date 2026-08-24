@@ -12,6 +12,7 @@ from okx_dog_ai.llm_client import LLMClient, LLMInferenceError
 def test_llm_model_adapter_payload():
     """测试多大模型参数抹平与适配"""
     client = LLMClient(
+        provider="deepseek",
         base_url="https://api.deepseek.com",
         api_key="sk-test",
         model="deepseek-reasoner",
@@ -67,7 +68,6 @@ def test_llm_model_adapter_payload():
 async def test_llm_client_mock_non_stream():
     """使用 MockTransport 测试非流式正常调用与 reasoning_content 提取"""
     async def handler(request: httpx.Request):
-        req_data = json.loads(request.read())
         resp_data = {
             "id": "chatcmpl-123",
             "object": "chat.completion",
@@ -83,7 +83,7 @@ async def test_llm_client_mock_non_stream():
         }
         return httpx.Response(200, json=resp_data)
 
-    client = LLMClient(base_url="https://api.deepseek.com", api_key="sk-test", model="deepseek-reasoner")
+    client = LLMClient(provider="deepseek", base_url="https://api.deepseek.com", api_key="sk-test", model="deepseek-reasoner")
     client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     content, thinking, latency_ms, actual_m = await client.generate(
@@ -110,7 +110,7 @@ async def test_llm_client_mock_streaming():
         ]
         return httpx.Response(200, content="".join(sse_lines).encode("utf-8"), headers={"Content-Type": "text/event-stream"})
 
-    client = LLMClient(base_url="https://api.deepseek.com", api_key="sk-test", model="deepseek-reasoner")
+    client = LLMClient(provider="deepseek", base_url="https://api.deepseek.com", api_key="sk-test", model="deepseek-reasoner")
     client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(stream_handler))
 
     events = []
@@ -155,18 +155,20 @@ async def test_llm_client_fallback_on_failure():
             return httpx.Response(200, json=resp_data)
         return httpx.Response(404)
 
+    mock_transport = httpx.MockTransport(fallback_handler)
     client = LLMClient(
+        provider="deepseek",
         base_url="https://api.deepseek.com",
         api_key="sk-main",
         model="deepseek-reasoner",
-        max_retries=1,
+        max_retries=0,
         fallback_config={
             "base_url": "https://api.openai.com/v1",
             "api_key": "sk-backup",
             "model": "gpt-4o",
         },
     )
-    client._http_client = httpx.AsyncClient(transport=httpx.MockTransport(fallback_handler))
+    client._http_client = httpx.AsyncClient(transport=mock_transport)
 
     content, thinking, latency_ms, actual_m = await client.generate(
         messages=[{"role": "user", "content": "analyze"}]

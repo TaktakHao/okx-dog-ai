@@ -1,21 +1,32 @@
 """
 OKX-Dog 量化与 AI 研判决策中枢 - 模型配置模块
 模块: okx-dog-ai/config.py
-支持 OpenAI 规范多厂商 (DeepSeek / GPT-4o / Qwen / Claude) 统一参数管理
+支持 Antigravity CLI 免 Key 首选与 DeepSeek / OpenAI / Claude 多厂商统一参数与容灾管理
 """
 
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
+AI_DIR = Path(__file__).resolve().parent
+ROOT_DIR = AI_DIR.parent
+
 
 class AIModelConfig(BaseSettings):
-    """AI 大模型与提示词引擎全局配置"""
+    """AI 大模型与提示词引擎全局配置 (支持首选驱动与容灾自愈备用)"""
 
+    # 主驱动引擎 (默认首选 Antigravity 本地免 Key 极速驱动)
     PROVIDER: Literal["antigravity", "deepseek", "openai", "anthropic", "custom"] = "antigravity"
-    BASE_URL: str = Field(default="https://api.deepseek.com", description="兼容 OpenAI 协议的 Base URL")
+    BASE_URL: str = Field(default="http://127.0.0.1:8001", description="兼容 OpenAI 协议的 Base URL")
     API_KEY: str = Field(default="", description="大模型 API Key")
     MODEL_NAME: str = Field(default="gemini-3.7-flash", description="推理模型或对话模型名称")
+
+    # 容灾备用引擎 (当 Antigravity CLI 异常/限流时 0 毫秒无缝接管)
+    FALLBACK_PROVIDER: Literal["deepseek", "openai", "custom", "none"] = "deepseek"
+    FALLBACK_BASE_URL: str = Field(default="https://api.deepseek.com", description="备用 API Base URL")
+    FALLBACK_API_KEY: str = Field(default="", description="备用 DeepSeek / OpenAI API Key")
+    FALLBACK_MODEL_NAME: str = Field(default="deepseek-reasoner", description="备用模型名称 (如 deepseek-reasoner / deepseek-chat)")
 
     # Antigravity CLI 配置
     ANTIGRAVITY_CLI_PATH: str = Field(default="", description="Antigravity CLI (agy) 可执行文件路径")
@@ -33,7 +44,7 @@ class AIModelConfig(BaseSettings):
     ENABLE_COT_STREAMING: bool = True
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=[str(ROOT_DIR / ".env"), str(AI_DIR / ".env"), ".env"],
         env_file_encoding="utf-8",
         extra="ignore"
     )

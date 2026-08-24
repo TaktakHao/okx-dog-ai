@@ -141,10 +141,15 @@ class AntigravityIsolatedEnvManager:
             return False
 
     def get_subprocess_env(self) -> Dict[str, str]:
-        """构建注入隔离环境 HOME 的子进程环境变量字典"""
+        """构建注入隔离环境 HOME 与 PATH 的子进程环境变量字典"""
         self.ensure_initialized()
         proc_env = os.environ.copy()
         proc_env["HOME"] = str(self.env_dir)
+        # 确保子进程环境中包含 ~/.local/bin 等标准 CLI 路径
+        local_bin = str(Path.home() / ".local" / "bin")
+        current_path = proc_env.get("PATH", "")
+        if local_bin not in current_path:
+            proc_env["PATH"] = f"{local_bin}:{current_path}"
         return proc_env
 
 
@@ -202,20 +207,43 @@ class AntigravityBridge:
             os.path.expanduser("~/.local/bin/agy"),
             "/usr/local/bin/agy",
             "/opt/homebrew/bin/agy",
+            os.path.expanduser("~/bin/agy"),
         ]
         for candidate in candidates:
             if candidate and os.path.exists(candidate) and os.access(candidate, os.X_OK):
                 return candidate
 
-        return "agy"
+        return shutil.which("agy") or "agy"
 
     def is_available(self) -> bool:
-        """检查 CLI 工具是否可用"""
+        """检查 CLI 工具或本地 Antigravity API Gateway 是否可用"""
         try:
             resolved = shutil.which(self.cli_path) or (os.path.exists(self.cli_path) and os.access(self.cli_path, os.X_OK))
-            return bool(resolved)
+            if resolved:
+                return True
         except Exception:
-            return False
+            pass
+
+        # 容器环境或远程网络模式：探测 Antigravity HTTP API 网关
+        try:
+            import urllib.request
+            base_urls = [
+                os.getenv("DEFAULT_LLM_BASE_URL", "http://host.docker.internal:8001").rstrip("/"),
+                "http://127.0.0.1:8001",
+                "http://host.docker.internal:8001"
+            ]
+            for b_url in base_urls:
+                try:
+                    req = urllib.request.Request(f"{b_url}/docs", headers={"User-Agent": "OKX-Dog-HealthCheck"})
+                    with urllib.request.urlopen(req, timeout=1.0) as resp:
+                        if resp.status == 200:
+                            return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        return False
 
     def _build_command(
         self,

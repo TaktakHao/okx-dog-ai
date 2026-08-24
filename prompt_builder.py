@@ -104,7 +104,8 @@ class MarketPromptBuilder:
 1. 多周期共振: 顺大应小 (1D/4H主趋势 -> 1H中继 -> 15M入场)。大周期顺势操作赋予高置信度；均线粘合分化时果断判定 RANGING 并建议 HOLD_WAIT。
 2. 衍生品验证: 价涨+OI增+费率合理=健康主升；价涨+OI降=空头踩踏假突破；资金费率极端(>+0.05%或<-0.05%)关注逆向挤压/逼空。
 3. TradFi资产特征: 黄金白银(XAU/XAG)受宏观利率与美元驱动，重点关注欧美交易时段真实突破；美股代币(NVDA/TSLA)依附美股开盘流动性；RWA(ONDO/PENDLE)兼顾链上收益率。
-4. 严格风控底线:
+4. 严格风控底线与资金感知:
+   - 资金自适应仓位：交易方案必须严格基于当前账户实际可用 USDT (account_balance_usdt) 进行风险预算，单笔止损敞口严格控制在可用资金的 1%~3%。
    - 严禁无止损开仓：必须给出基于 ATR(14) 或关键技术位的硬止损 stop_loss_price。
    - 盈亏比门槛：建议方案的第一止盈位盈亏比 (R:R Ratio) 必须 ≥ 1.5。不足 1.5 建议 HOLD_WAIT。
    - 分阶段止盈：TP1 建议平仓 50% 并提示移动保本 (Breakeven Locked)。
@@ -232,10 +233,12 @@ class MarketPromptBuilder:
         else:
             asset_type = "加密资产"
 
+        avail_u = float(data.get("account_balance_usdt") or data.get("account_available_margin_usdt") or 0.0)
+
         lines = [
             "<p0_context>",
             f"标的: {symbol} [{asset_type}] | 标记价: {_fmt_p(price, price)} USDT (24h: {_fmt_pct(chg_24h)}) | 风格: {style}",
-            f"持仓: {pos_str} | 风控限额: 单笔≤{max_order}U, 杠杆≤{max_lev}x",
+            f"持仓: {pos_str} | 账户可用资金: {avail_u:.2f} USDT | 风控限额: 单笔≤{max_order}U, 杠杆≤{max_lev}x",
             f"4H主趋势: {trend_4h} (EMA20={_fmt_p(e20_4h, price)}, EMA50={_fmt_p(e50_4h, price)})",
         ]
         if scenario == "anomaly" or data.get("is_anomaly_mode"):

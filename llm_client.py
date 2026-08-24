@@ -23,15 +23,48 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 import httpx
 
 try:
-    from config import AIModelConfig, ai_settings
-    from antigravity_bridge import AntigravityBridge, antigravity_bridge
-except ImportError:
+    from okx_dog_ai.config import AIModelConfig, ai_settings
+    from okx_dog_ai.antigravity_bridge import AntigravityBridge, antigravity_bridge
+except (ImportError, ModuleNotFoundError):
     try:
         from .config import AIModelConfig, ai_settings
         from .antigravity_bridge import AntigravityBridge, antigravity_bridge
-    except ImportError:
-        from okx_dog_ai.config import AIModelConfig, ai_settings
-        from okx_dog_ai.antigravity_bridge import AntigravityBridge, antigravity_bridge
+    except (ImportError, ModuleNotFoundError, ValueError):
+        import sys
+        from pathlib import Path
+        ai_dir = str(Path(__file__).resolve().parent)
+        if ai_dir not in sys.path:
+            sys.path.insert(0, ai_dir)
+        import importlib
+        try:
+            _ai_cfg = importlib.import_module("okx-dog-ai.config")
+        except Exception:
+            _ai_cfg = None
+        if not _ai_cfg or not hasattr(_ai_cfg, "ai_settings"):
+            import config as _local_cfg
+            if hasattr(_local_cfg, "ai_settings"):
+                _ai_cfg = _local_cfg
+            else:
+                # 显式从当前目录加载
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("ai_config_mod", Path(ai_dir) / "config.py")
+                _ai_cfg = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(_ai_cfg)
+
+        AIModelConfig = getattr(_ai_cfg, "AIModelConfig", None)
+        ai_settings = getattr(_ai_cfg, "ai_settings", None)
+
+        try:
+            import antigravity_bridge as _agy_mod
+            AntigravityBridge = getattr(_agy_mod, "AntigravityBridge", None)
+            antigravity_bridge = getattr(_agy_mod, "antigravity_bridge", None)
+        except Exception:
+            import importlib.util
+            spec_b = importlib.util.spec_from_file_location("ai_bridge_mod", Path(ai_dir) / "antigravity_bridge.py")
+            _agy_mod = importlib.util.module_from_spec(spec_b)
+            spec_b.loader.exec_module(_agy_mod)
+            AntigravityBridge = getattr(_agy_mod, "AntigravityBridge", None)
+            antigravity_bridge = getattr(_agy_mod, "antigravity_bridge", None)
 
 logger = logging.getLogger("okx_dog.ai.llm_client")
 
@@ -70,6 +103,15 @@ class LLMClient:
         self.timeout_seconds = timeout_seconds or ai_settings.REQUEST_TIMEOUT_SECONDS
         self.max_retries = max_retries
         self.fallback_config = fallback_config
+
+        # 自动装配默认备用容灾引擎 (如 DeepSeek-v4-pro / DeepSeek-R1)
+        if not self.fallback_config and getattr(ai_settings, "FALLBACK_PROVIDER", "none") != "none":
+            self.fallback_config = {
+                "provider": getattr(ai_settings, "FALLBACK_PROVIDER", "deepseek"),
+                "base_url": getattr(ai_settings, "FALLBACK_BASE_URL", "https://api.deepseek.com"),
+                "api_key": getattr(ai_settings, "FALLBACK_API_KEY", "") or self.api_key,
+                "model": getattr(ai_settings, "FALLBACK_MODEL_NAME", "deepseek-reasoner"),
+            }
 
         # 如果没有配置 API_KEY 且默认是 deepseek/openai，自动将 provider 切换为 antigravity
         if not self.api_key and self.provider in ("deepseek", "openai"):

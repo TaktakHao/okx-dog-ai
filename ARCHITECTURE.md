@@ -251,25 +251,25 @@ class LLMModelAdapter:
 
 ---
 
-### 4.2 异步连接池、重试与熔断降级机制 (Circuit Breaker)
+### 4.3 Antigravity CLI 首选 + DeepSeek-v4-pro / DeepSeek-R1 容灾自愈双引擎架构
 
-网关使用 `httpx.AsyncClient` 维护连接池，并具备指数退避带抖动 (Exponential Backoff with Jitter) 与熔断状态机：
+为了实现 **“实盘盈利千倍覆盖 Token 消耗”**，系统采用主备双引擎调度策略：
+1. **首选引擎 (Primary)**：本地 `Antigravity CLI (agy)`。
+   - 免第三方 API Key，0 额外调用成本；
+   - 采用专属沙盒隔离环境 (`.antigravity_env`)，剥离 60+ 无关 Skills 与 MCP，响应延迟压缩至 1~3 秒；
+   - 支持 `--json-schema` 物理级契约强约束与 CoT 思维链流式捕获。
+2. **容灾引擎 (Fallback)**：`DeepSeek-v4-pro` / `DeepSeek-R1`。
+   - 当 Antigravity CLI 遇到宿主机进程异常、超时或系统限流时，网关 0 毫秒无缝退避至 DeepSeek API；
+   - 具备指数退避重试 (Exponential Backoff with Jitter) 与自动恢复机制，保障 7x24h 决策链路永不掉线。
 
-```mermaid
-stateDiagram-v2
-    [*] --> Closed: 初始化 (正常请求)
-    
-    Closed --> Open: 连续失败 ≥ 3 次 (5xx / 超时)
-    Open --> HalfOpen: 熔断冷却期经过 30 秒
-    
-    HalfOpen --> Closed: 试探请求成功
-    HalfOpen --> Open: 试探请求失败
-    
-    note right of Open
-        所有后续请求直接快速失败，
-        返回本地内置规则兜底响应 (HOLD_WAIT)
-    end note
-```
+---
+
+### 4.4 实时加密热点快讯流与 NLP 舆情打分引擎 (`NewsNLPEngine`)
+
+为捕捉全球宏观与加密热点事件，系统集成了实时异步快讯分析流水线：
+1. **多源异步抓取与 TTL 缓存**：以 60s 内存 TTL 周期性拉取 CryptoPanic / 宏观快讯，杜绝网络阻塞与频繁调用；
+2. **时效评级与情感偏向量化**：自动输出情感分 `sentiment_score (-1.0 ~ +1.0)` 与时效评级 (`P0/P1/P2`)；
+3. **黑天鹅一票否决**：当检测到 P0 级别突发恶性事件（如监管起诉/黑天鹅崩盘）或宏观大事件前 30 分钟时，自动触发锁仓一票否决，避免流动性真空插针。
 
 ---
 

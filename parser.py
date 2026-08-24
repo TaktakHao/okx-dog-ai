@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pydantic import ValidationError
 
 try:
-    from schemas import (
+    from okx_dog_ai.schemas import (
         AIAnalysisResponse,
         TimeframeAnalysis,
         TimeframeDetail,
@@ -40,9 +40,9 @@ try:
         RiskAssessment,
         MarketRegime,
     )
-except ImportError:
+except (ImportError, Exception):
     try:
-        from .schemas import (
+        from schemas import (
             AIAnalysisResponse,
             TimeframeAnalysis,
             TimeframeDetail,
@@ -58,8 +58,8 @@ except ImportError:
             RiskAssessment,
             MarketRegime,
         )
-    except ImportError:
-        from okx_dog_ai.schemas import (
+    except (ImportError, Exception):
+        from .schemas import (
             AIAnalysisResponse,
             TimeframeAnalysis,
             TimeframeDetail,

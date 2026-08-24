@@ -96,17 +96,29 @@ class MacroNewsAgent:
         args = []
         risks = []
 
-        if news_items:
-            avg_sentiment = sum(n.get("sentiment_score", 0.0) for n in news_items) / len(news_items)
-            if avg_sentiment > 0.3:
-                args.append(f"全网最新快讯整体情绪偏利好 (平均情感打分: {avg_sentiment:+.2f})")
-            elif avg_sentiment < -0.3:
+        items = news_items or snapshot.get("news_items")
+        if not items:
+            try:
+                from news_nlp_engine import NewsNLPEngine
+                items = NewsNLPEngine._cached_news
+            except Exception:
+                items = None
+
+        if items:
+            avg_sentiment = sum(n.get("sentiment_score", 0.0) for n in items) / max(len(items), 1)
+            has_p0 = any(n.get("urgency") == "P0" for n in items)
+            if has_p0:
+                confidence = 0.90
+                risks.append("🚨 监测到突发 P0 级别全球重大事件/黑天鹅快讯，需防范极端插针！")
+            elif avg_sentiment > 0.2:
+                args.append(f"全网最新快讯整体情绪偏多头利好 (综合情感打分: {avg_sentiment:+.2f})")
+            elif avg_sentiment < -0.2:
                 confidence += 0.1
-                risks.append(f"全网热点存在利空情绪扰动 (平均情感打分: {avg_sentiment:+.2f})")
+                risks.append(f"全网热点存在利空情绪扰动 (综合情感打分: {avg_sentiment:+.2f})")
         else:
             args.append("宏观日历暂无重大黑天鹅风险窗口公布，大盘流动性中性偏暖")
 
-        stance = "BULLISH" if confidence >= 0.65 else "NEUTRAL"
+        stance = "BULLISH" if confidence >= 0.65 and not risks else ("BEARISH" if any("🚨" in r for r in risks) else "NEUTRAL")
         return AgentDebateOpinion(
             role_name="宏观舆情专家 (Macro & News)",
             stance=stance,

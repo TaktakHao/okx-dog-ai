@@ -41,13 +41,29 @@ async def macro_event_scanner_node(state: QuantTraderState) -> Dict[str, Any]:
     now_ms = int(time.time() * 1000)
     raw_snapshot = state.get("market_snapshot", {})
 
-    # 提取快照中的宏观日历与新闻情绪字段
+    # 1. 提取快照中的宏观日历
     macro_event_info = raw_snapshot.get("macro_calendar_event") or {}
     minutes_to_event = macro_event_info.get("minutes_to_event")
     event_title = macro_event_info.get("event_title")
+
+    # 2. 动态提取或异步拉取实时加密快讯
     news_sentiment_avg = float(raw_snapshot.get("news_sentiment_avg", 0.0))
     has_black_swan = bool(raw_snapshot.get("has_breaking_black_swan", False))
+    news_items = raw_snapshot.get("news_items", [])
 
+    if not news_items or news_sentiment_avg == 0.0:
+        try:
+            from news_nlp_engine import NewsNLPEngine
+            fetched_news = await NewsNLPEngine.fetch_latest_crypto_news(limit=6)
+            if fetched_news:
+                news_items = fetched_news
+                avg_score, black_swan, _ = NewsNLPEngine.get_sentiment_summary(fetched_news)
+                news_sentiment_avg = avg_score
+                has_black_swan = has_black_swan or black_swan
+        except Exception as nlp_err:
+            logger.debug(f"新闻引擎动态调用跳过: {nlp_err}")
+
+    # 3. 运行宏观风险评估
     event_risk_level, diagnostic_msg, is_lockout = evaluate_macro_event_risk(
         minutes_to_high_impact_event=minutes_to_event,
         event_title=event_title,
@@ -61,12 +77,14 @@ async def macro_event_scanner_node(state: QuantTraderState) -> Dict[str, Any]:
         "minutes_to_event": minutes_to_event,
         "event_title": event_title,
         "news_sentiment_avg": news_sentiment_avg,
+        "has_breaking_black_swan": has_black_swan,
+        "news_items_count": len(news_items),
         "diagnostic_summary": diagnostic_msg,
     }
 
     thought_text = (
-        f"【全球宏观日历与事件扫描】风险等级: {event_risk_level} (锁仓状态: {'强制锁仓' if is_lockout else '正常'})。"
-        f"{diagnostic_msg}"
+        f"【全球宏观日历与事件扫描】风险等级: {event_risk_level} (锁仓状态: {'强制锁仓' if is_lockout else '正常'})。\n"
+        f"快讯舆情偏向: {news_sentiment_avg:+.2f} (黑天鹅预警={has_black_swan})。{diagnostic_msg}"
     )
 
     thinking_step: ThinkingStep = {

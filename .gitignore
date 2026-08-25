@@ -9,4 +9,5 @@ venv/
 .pytest_cache/
 .DS_Store
 .antigravity_env/
+*.db
 

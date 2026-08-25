@@ -111,54 +111,86 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
 
     consensus_score = max(5, min(95, consensus_score))
 
-    # 4. 动作判定与准入红线审查
+    # 4. 动作判定与准入红线审查 (收紧置信度门槛 >= 0.75)
     action = "HOLD_WAIT"
     confidence = 0.50
     urgency = "LOW"
     strategy_rationale = ""
     is_approved_by_arbiter = False
+    intent = "WAIT_OBSERVE"
+
+    # 推导战术意图 (Intent)
+    if fr_bias in ["EXTREME_POSITIVE", "EXTREME_NEGATIVE"]:
+        intent = "SHORT_SQUEEZE"
+    elif abs(imbalance_ratio - 1.0) >= 0.40:
+        intent = "LIQUIDITY_SWEEP"
+    elif macro_regime in ["TRENDING_UP", "TRENDING_DOWN"]:
+        intent = "TREND_CONTINUATION"
+    elif is_squeezed:
+        intent = "MEAN_REVERSION"
+    else:
+        intent = "BREAKOUT_FOLLOW"
 
     if is_event_lockout:
         action = "HOLD_WAIT"
         confidence = 0.30
         urgency = "LOW"
+        intent = "WAIT_OBSERVE"
         strategy_rationale = f"触发宏观高危事件锁 ({macro_event.get('diagnostic_summary', '敏感窗口')})，强制全局观望"
     elif is_squeezed and macro_regime == "VOLATILE_BREAKOUT":
         action = "HOLD_WAIT"
         confidence = 0.50
         urgency = "LOW"
+        intent = "WAIT_OBSERVE"
         strategy_rationale = f"触发波动率挤压保护: {squeeze_msg}，收敛为防守观望"
     elif macro_regime == "TRENDING_UP" and (cex_netflow > 15_000_000 or has_unlock_risk or onchain_score <= -0.4):
         action = "HOLD_WAIT"
         confidence = 0.55
         urgency = "LOW"
+        intent = "WAIT_OBSERVE"
         strategy_rationale = f"检测到链上大额充币/抛压风险 (CEX净流入=${cex_netflow/1e6:.1f}M)，警惕诱多洗盘"
     elif macro_regime == "TRENDING_UP" and fr_bias == "EXTREME_POSITIVE" and deriv_score > 0.6:
         action = "HOLD_WAIT"
         confidence = 0.58
         urgency = "LOW"
+        intent = "WAIT_OBSERVE"
         strategy_rationale = "衍生品资金费率极度过热，多头杠杆拥挤，防范踩踏插针"
-    elif consensus_score >= 70 or macro_regime == "TRENDING_UP":
-        action = "BUY_LONG"
-        confidence = round(min(0.92, 0.72 + (consensus_score - 50) * 0.004), 2)
-        urgency = "MEDIUM"
-        is_approved_by_arbiter = True
-        strategy_rationale = (
-            f"多智能体共识做多 (共识分={consensus_score}/100) + 链上资金偏好({onchain_bias}) + 盘口支撑({imbalance_ratio:.2f})"
-        )
-    elif consensus_score <= 35 or macro_regime == "TRENDING_DOWN":
-        action = "SELL_SHORT"
-        confidence = round(min(0.92, 0.72 + (50 - consensus_score) * 0.004), 2)
-        urgency = "MEDIUM"
-        is_approved_by_arbiter = True
-        strategy_rationale = (
-            f"多智能体共识做空 (共识分={consensus_score}/100) + 空头破位({onchain_bias}) + 盘口压制"
-        )
+    elif consensus_score >= 75:
+        calc_conf = round(min(0.95, 0.75 + (consensus_score - 75) * 0.01), 2)
+        if calc_conf >= 0.75:
+            action = "BUY_LONG"
+            confidence = calc_conf
+            urgency = "MEDIUM"
+            is_approved_by_arbiter = True
+            strategy_rationale = (
+                f"多智能体强共识做多 (共识分={consensus_score}/100, 战术意图={intent}) + 链上资金偏好({onchain_bias}) + 盘口支撑({imbalance_ratio:.2f})"
+            )
+        else:
+            action = "HOLD_WAIT"
+            confidence = calc_conf
+            intent = "WAIT_OBSERVE"
+            strategy_rationale = f"仲裁置信度 ({calc_conf}) 未达 0.75 红线，转为观望"
+    elif consensus_score <= 30:
+        calc_conf = round(min(0.95, 0.75 + (30 - consensus_score) * 0.01), 2)
+        if calc_conf >= 0.75:
+            action = "SELL_SHORT"
+            confidence = calc_conf
+            urgency = "MEDIUM"
+            is_approved_by_arbiter = True
+            strategy_rationale = (
+                f"多智能体强共识做空 (共识分={consensus_score}/100, 战术意图={intent}) + 空头破位({onchain_bias}) + 盘口压制"
+            )
+        else:
+            action = "HOLD_WAIT"
+            confidence = calc_conf
+            intent = "WAIT_OBSERVE"
+            strategy_rationale = f"仲裁置信度 ({calc_conf}) 未达 0.75 红线，转为观望"
     else:
         action = "HOLD_WAIT"
         confidence = 0.55
         urgency = "LOW"
-        strategy_rationale = f"首席仲裁共识分 ({consensus_score}/100) 未达准入红线 (≥70 或 ≤35)，保持观望"
+        intent = "WAIT_OBSERVE"
+        strategy_rationale = f"首席仲裁共识分 ({consensus_score}/100) 未达准入红线 (≥75 或 ≤30)，保持观望"
 
     # 5. 点位规划推导 (ATR 乘数 + 摩擦与反思修正)
     atr_multiplier = 1.8
@@ -177,7 +209,7 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         entry_avg = (entry_low + entry_high) / 2.0
         if stop_loss >= entry_avg:
             stop_loss = round(entry_avg - atr14 * 1.5, 2 if current_price > 10 else 4)
-        required_reward = (abs(entry_avg - stop_loss) + friction_buffer) * 1.65 + friction_buffer
+        required_reward = (abs(entry_avg - stop_loss) + friction_buffer) * 1.80 + friction_buffer
         tp1 = round(entry_avg + required_reward, 2 if current_price > 10 else 4)
         tp2 = round(entry_avg + required_reward * 1.8, 2 if current_price > 10 else 4)
         leverage = min(3, max_allowed_leverage)
@@ -188,7 +220,7 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         entry_avg = (entry_low + entry_high) / 2.0
         if stop_loss <= entry_avg:
             stop_loss = round(entry_avg + atr14 * 1.5, 2 if current_price > 10 else 4)
-        required_reward = (abs(stop_loss - entry_avg) + friction_buffer) * 1.65 + friction_buffer
+        required_reward = (abs(stop_loss - entry_avg) + friction_buffer) * 1.80 + friction_buffer
         tp1 = round(entry_avg - required_reward, 2 if current_price > 10 else 4)
         tp2 = round(entry_avg - required_reward * 1.8, 2 if current_price > 10 else 4)
         leverage = min(3, max_allowed_leverage)
@@ -200,7 +232,7 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         tp1 = round(current_price * 1.015, 2 if current_price > 10 else 4)
         tp2 = round(current_price * 1.030, 2 if current_price > 10 else 4)
         leverage = 1
-        rr_calc = 1.5
+        rr_calc = 1.8
 
     # 6. 组装 TradePlan 与 RiskAssessment
     if action in ["BUY_LONG", "SELL_SHORT"]:
@@ -226,12 +258,13 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         ]
 
     trade_plan = {
+        "intent": intent,
         "entry_range": [entry_low, entry_high],
         "take_profit_levels": take_profit_list,
         "stop_loss_price": stop_loss,
         "risk_reward_ratio": rr_calc,
         "suggested_leverage": min(leverage, max_allowed_leverage),
-        "order_type": recommended_order_type if recommended_order_type in ["LIMIT", "POST_ONLY"] else "LIMIT",
+        "order_type": "POST_ONLY",
     }
 
     key_risks = [

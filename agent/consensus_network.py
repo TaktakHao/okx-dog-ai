@@ -151,16 +151,37 @@ class ConsensusOrchestrator:
         bear_op = self.bear_agent.evaluate(snapshot)
         macro_op = self.macro_agent.evaluate(snapshot, news_items)
 
-        # 2. 仲裁打分
-        score = 60
-        if bull_op.stance == "BULLISH":
-            score += int(bull_op.confidence * 25)
-        if bear_op.stance == "BEARISH":
-            score -= int(bear_op.confidence * 25)
-        if macro_op.stance == "BULLISH":
-            score += int(macro_op.confidence * 15)
+        # 2. 仲裁打分 (基于 Softmax 动态加权门控网络)
+        try:
+            from .evolution.evolution_manager import AgentEvolutionManager
+            manager = AgentEvolutionManager.get_instance()
+            weights = manager.gating_network.get_weights()
+            w_bull = weights.get("bull_specialist", 25.0) / 100.0
+            w_bear = weights.get("bear_critic", 25.0) / 100.0
+            w_macro = weights.get("macro_news", 15.0) / 100.0
+            if not injected_rules:
+                injected_rules = list(manager.learned_rules)
+        except Exception:
+            w_bull, w_bear, w_macro = 0.25, 0.25, 0.15
 
-        score = max(10, min(95, score))
+        # 基础中性分 50
+        net_delta = 0.0
+        if bull_op.stance == "BULLISH":
+            net_delta += bull_op.confidence * w_bull * 80.0
+        elif bull_op.stance == "BEARISH":
+            net_delta -= bull_op.confidence * w_bull * 40.0
+
+        if bear_op.stance == "BEARISH":
+            net_delta -= bear_op.confidence * w_bear * 80.0
+        elif bear_op.stance == "BULLISH":
+            net_delta += bear_op.confidence * w_bear * 30.0
+
+        if macro_op.stance == "BULLISH":
+            net_delta += macro_op.confidence * w_macro * 50.0
+        elif macro_op.stance == "BEARISH":
+            net_delta -= macro_op.confidence * w_macro * 60.0
+
+        score = int(max(10, min(95, 50 + net_delta)))
 
         # 3. 动作判定与准入红线
         final_action = SignalAction.HOLD_WAIT

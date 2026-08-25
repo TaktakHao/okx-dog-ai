@@ -34,3 +34,9 @@ __all__ = [
     "evaluate_macro_event_risk",
     "analyze_orderbook_liquidity",
 ]
+
+from .evolution import (
+    RewardEngine,
+    SoftmaxGatingNetwork,
+    AgentEvolutionManager,
+)

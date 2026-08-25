@@ -581,4 +581,17 @@ flowchart LR
 4. **`codex_client.py` (Self-Healing Loop)**：实现 `Prompt -> Code -> AST -> Sandbox -> Auto-Fix` 的 3 轮报错自动纠错重试闭环。
 5. **`benchmark/eval_runner.py` (Golden Dataset Suite)**：面向 500+ 极端行情典型样本的自动化批量防退化评测底座。
 
+---
+
+## 10. v4.1 多智能体自适应强化奖励与 AI 员工动态赋权架构
+
+### 10.1 闭环架构与核心模块
+在 `okx-dog-ai/agent/evolution/` 模块下，系统构建了完整的「复合奖励分解 -> Softmax 动态加权 -> Harness 防退化 -> 版本快照熔断」自演进闭环：
+1. **`reward_engine.py` (多维复合奖励引擎)**：结合实现盈亏比 ($S_{rr}$)、MFE/MAE 走势预测精度 ($S_{acc}$)、排雷避险立功加分 ($S_{risk}$) 与回撤惩罚 ($P_{dd}$)，为各 Agent 分解单笔强化学习收益；
+2. **`gating_network.py` (Softmax 动态门控网络)**：维护各专家 EMA 表现得分，经带 $[8.0\%, 35.0\%]$ 上下限约束的 Softmax 计算平滑决策权重；
+3. **`evolution_manager.py` (员工档案与演进中枢)**：管理决策层 6 位拟人化量化员工（冲锋多头、铁血风控、全球情报、链上巨鲸、盘口狙击、量化仲裁）档案、等级与避坑知识库；
+4. **`consensus_network.py` (加权动态仲裁)**：仲裁官依据各专家当前动态话语权打分，并强制注入最新沉淀的避坑规则；
+5. **安全熔断与一键回滚**：连续 3 笔亏损时秒级自动回滚至历史出厂黄金基准快照。
+
+
 

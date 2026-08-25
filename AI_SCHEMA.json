@@ -138,6 +138,7 @@
       "type": "object",
       "description": "建议交易计划与量化点位参数",
       "required": [
+        "intent",
         "entry_range",
         "take_profit_levels",
         "stop_loss_price",
@@ -147,6 +148,18 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "intent": {
+          "type": "string",
+          "description": "战术交易逻辑分类",
+          "enum": [
+            "SHORT_SQUEEZE",
+            "LIQUIDITY_SWEEP",
+            "TREND_CONTINUATION",
+            "MEAN_REVERSION",
+            "BREAKOUT_FOLLOW",
+            "WAIT_OBSERVE"
+          ]
+        },
         "entry_range": {
           "type": "array",
           "description": "建议入场价格区间 [最低入场价, 最高入场价]，例如 [94500.0, 94800.0]。若为 HOLD_WAIT 可填 [0.0, 0.0]",
@@ -184,10 +197,10 @@
         },
         "order_type": {
           "type": "string",
-          "description": "建议委托类型：LIMIT(限价单), MARKET(市价单), TRIGGER_LIMIT(条件计划限价单)",
+          "description": "建议委托类型：POST_ONLY(只做Maker限价单), LIMIT(普通限价单), TRIGGER_LIMIT(条件计划限价单)",
           "enum": [
+            "POST_ONLY",
             "LIMIT",
-            "MARKET",
             "TRIGGER_LIMIT"
           ]
         }

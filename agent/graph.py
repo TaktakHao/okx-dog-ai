@@ -14,9 +14,11 @@ OKX-Dog LangGraph 资深量化交易员分层图编排与状态机构建器
 from __future__ import annotations
 
 import logging
-from typing import Literal
-
-from langgraph.graph import END, START, StateGraph
+try:
+    from langgraph.graph import END, START, StateGraph
+except ImportError:
+    # 允许在没有外部 langgraph 库的基础轻量环境下安全导入
+    END, START, StateGraph = "END", "START", object
 
 from .nodes import (
     adversarial_debate_node,

@@ -60,8 +60,9 @@ class SignalUrgency(str, Enum):
 
 class TradePlanOrderType(str, Enum):
     """建议交易计划委托类型"""
+    POST_ONLY = "POST_ONLY"                  # 只做 Maker 被动挂单 (无吃单滑点与费率返还)
     LIMIT = "LIMIT"                          # 限价单
-    MARKET = "MARKET"                        # 市价单
+    MARKET = "MARKET"                        # 市价单 (兼容历史)
     TRIGGER_LIMIT = "TRIGGER_LIMIT"          # 条件计划限价单
 
 
@@ -236,12 +237,13 @@ class TradePlan(BaseModel):
     """建议交易计划与量化点位参数 (AI_SCHEMA properties.trade_plan)"""
     model_config = ConfigDict(populate_by_name=True)
 
+    intent: str = Field("WAIT_OBSERVE", description="战术交易逻辑分类：SHORT_SQUEEZE, LIQUIDITY_SWEEP, TREND_CONTINUATION, MEAN_REVERSION, BREAKOUT_FOLLOW, WAIT_OBSERVE")
     entry_range: List[float] = Field(..., min_length=2, max_length=2, description="建议入场价格区间 [最低入场价, 最高入场价]")
     take_profit_levels: List[TakeProfitLevel] = Field(..., min_length=1, max_length=4, description="分批止盈目标列表")
     stop_loss_price: float = Field(..., ge=0.0, description="硬止损价格")
     risk_reward_ratio: float = Field(..., ge=0.0, description="理论盈亏比 (R:R Ratio)")
     suggested_leverage: int = Field(..., ge=1, le=20, description="建议杠杆倍数 (1 ~ 20)")
-    order_type: TradePlanOrderType = Field(TradePlanOrderType.LIMIT, description="建议委托类型：LIMIT, MARKET, TRIGGER_LIMIT")
+    order_type: TradePlanOrderType = Field(TradePlanOrderType.POST_ONLY, description="建议委托类型：POST_ONLY, LIMIT, TRIGGER_LIMIT")
 
 
 class RiskAssessment(BaseModel):

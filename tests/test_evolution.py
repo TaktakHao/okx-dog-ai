@@ -74,13 +74,21 @@ class TestEvolutionEngine(unittest.TestCase):
             self.assertTrue(8.0 <= w <= 35.0, f"角色 {r} 权重 {w} 超出边界 [8, 35]")
 
     def test_evolution_manager_lifecycle(self):
-        """测试员工演进管理器的生命周期与一键回滚"""
+        """测试员工演进管理器的生命周期与出厂重置归零"""
         manager = AgentEvolutionManager.get_instance()
         status = manager.get_team_status()
         self.assertEqual(len(status.team_members), 6)
         self.assertEqual(status.harness_baseline_status, "STABLE")
 
-        # 执行一次模拟结算
+        # 验证出厂初始状态全为 0 战绩与 Lv.1
+        for emp in status.team_members:
+            self.assertEqual(emp.level, 1)
+            self.assertEqual(emp.wins_count, 0)
+            self.assertEqual(emp.losses_count, 0)
+            self.assertEqual(emp.defended_crises_count, 0)
+            self.assertEqual(emp.contribution_score, 0.0)
+
+        # 执行一次交易平仓强化结算
         opinions = {
             "bull_specialist": {"role_name": "多头辩护专家", "stance": "BULLISH", "confidence": 0.8},
             "bear_critic": {"role_name": "空头风控专家", "stance": "BEARISH", "confidence": 0.6},
@@ -101,12 +109,21 @@ class TestEvolutionEngine(unittest.TestCase):
             agent_opinions=opinions
         )
         self.assertEqual(outcome.realized_pnl, 150.0)
-        self.assertGreater(manager.total_evolution_rounds, 12)
+        self.assertEqual(manager.total_evolution_rounds, 1)
 
-        # 测试一键回滚
-        rollback_status = manager.rollback_to_baseline()
-        self.assertEqual(rollback_status.harness_baseline_status, "ROLLED_BACK")
+        # 测试恢复出厂设置并验证全面归零
+        reset_status = manager.reset_team()
+        self.assertEqual(reset_status.total_evolution_rounds, 0)
+        self.assertEqual(reset_status.active_epoch, "epoch_v1.0_factory_reset")
+        for emp in reset_status.team_members:
+            self.assertEqual(emp.level, 1)
+            self.assertEqual(emp.wins_count, 0)
+            self.assertEqual(emp.losses_count, 0)
+            self.assertEqual(emp.defended_crises_count, 0)
+            self.assertEqual(emp.contribution_score, 0.0)
+            self.assertAlmostEqual(emp.weight_percent, 16.7, delta=1.0)
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -63,7 +63,7 @@ class EvolutionSnapshotModel(BaseModel):
     description: str
 
 
-# 默认 AI 员工初始档案 (通俗化、零金融门槛)
+# 默认 AI 员工出厂初始档案 (零战绩、纯净 Lv.1 就绪状态)
 INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
     {
         "role_id": "bull_specialist",
@@ -72,14 +72,14 @@ INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
         "avatar_icon": "TrendingUp",
         "title": "资深趋势先锋",
         "layer": "adversarial",
-        "level": 3,
-        "contribution_score": 128.5,
-        "win_rate_7d": 0.75,
-        "wins_count": 18,
-        "losses_count": 6,
-        "defended_crises_count": 2,
+        "level": 1,
+        "contribution_score": 0.0,
+        "win_rate_7d": 0.0,
+        "wins_count": 0,
+        "losses_count": 0,
+        "defended_crises_count": 0,
         "specialty_description": "擅长捕捉放量突破与均线多头共振机会，进攻能力极强",
-        "recent_achievement": "精准捕捉突破行情，近7天带单胜率达 75%"
+        "recent_achievement": "新入职就位，等待实盘信号检验"
     },
     {
         "role_id": "bear_critic",
@@ -88,14 +88,14 @@ INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
         "avatar_icon": "ShieldAlert",
         "title": "首席排雷审核员",
         "layer": "adversarial",
-        "level": 4,
-        "contribution_score": 164.0,
-        "win_rate_7d": 0.80,
-        "wins_count": 12,
-        "losses_count": 3,
-        "defended_crises_count": 14,
+        "level": 1,
+        "contribution_score": 0.0,
+        "win_rate_7d": 0.0,
+        "wins_count": 0,
+        "losses_count": 0,
+        "defended_crises_count": 0,
         "specialty_description": "专挑多头破绽与资金费率过热风险，多次成功阻断假突破插针",
-        "recent_achievement": "成功识别资金费率偏高陷阱，拦截 3 次高位追涨"
+        "recent_achievement": "全天候风控防御就绪"
     },
     {
         "role_id": "macro_news",
@@ -104,14 +104,14 @@ INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
         "avatar_icon": "Globe",
         "title": "大盘雷达侦察官",
         "layer": "perception",
-        "level": 2,
-        "contribution_score": 95.0,
-        "win_rate_7d": 0.68,
-        "wins_count": 10,
-        "losses_count": 4,
-        "defended_crises_count": 6,
+        "level": 1,
+        "contribution_score": 0.0,
+        "win_rate_7d": 0.0,
+        "wins_count": 0,
+        "losses_count": 0,
+        "defended_crises_count": 0,
         "specialty_description": "全天候扫描全球宏观日历与突发黑天鹅快讯，把控大盘安全边界",
-        "recent_achievement": "提前预警宏观议息会议波动窗口，保护底仓安全"
+        "recent_achievement": "宏观资讯雷达已接入"
     },
     {
         "role_id": "onchain_analyst",
@@ -120,14 +120,14 @@ INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
         "avatar_icon": "Link2",
         "title": "链上巨鲸追踪官",
         "layer": "perception",
-        "level": 3,
-        "contribution_score": 115.0,
-        "win_rate_7d": 0.74,
-        "wins_count": 14,
-        "losses_count": 5,
-        "defended_crises_count": 5,
+        "level": 1,
+        "contribution_score": 0.0,
+        "win_rate_7d": 0.0,
+        "wins_count": 0,
+        "losses_count": 0,
+        "defended_crises_count": 0,
         "specialty_description": "监控大额转账、交易所充提币净流向与巨鲸持仓异动，洞悉主力意图",
-        "recent_achievement": "精准捕捉巨鲸增持异动，确认主力资金流入信号"
+        "recent_achievement": "链上巨鲸监控已就位"
     },
     {
         "role_id": "micro_sniper",
@@ -136,14 +136,14 @@ INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
         "avatar_icon": "Zap",
         "title": "高频动量交易员",
         "layer": "perception",
-        "level": 3,
-        "contribution_score": 110.0,
-        "win_rate_7d": 0.72,
-        "wins_count": 15,
-        "losses_count": 5,
-        "defended_crises_count": 4,
+        "level": 1,
+        "contribution_score": 0.0,
+        "win_rate_7d": 0.0,
+        "wins_count": 0,
+        "losses_count": 0,
+        "defended_crises_count": 0,
         "specialty_description": "深度解析买卖盘厚度与大单挂单失衡，优化极致入场点位",
-        "recent_achievement": "盘口挂单深度监测准确，有效降低入场滑点损耗"
+        "recent_achievement": "毫秒级订单簿感知已启动"
     },
     {
         "role_id": "chief_arbiter",
@@ -152,14 +152,14 @@ INITIAL_EMPLOYEES: List[Dict[str, Any]] = [
         "avatar_icon": "Award",
         "title": "交易决策总指挥",
         "layer": "arbitration",
-        "level": 5,
-        "contribution_score": 210.0,
-        "win_rate_7d": 0.78,
-        "wins_count": 28,
-        "losses_count": 8,
-        "defended_crises_count": 18,
+        "level": 1,
+        "contribution_score": 0.0,
+        "win_rate_7d": 0.0,
+        "wins_count": 0,
+        "losses_count": 0,
+        "defended_crises_count": 0,
         "specialty_description": "综合多方辩论陈述与前车之鉴，坚守盈亏比 >= 1.8 准入红线",
-        "recent_achievement": "全局统筹胜率把关，严守不开无把握之单"
+        "recent_achievement": "量化仲裁准则已锁定"
     }
 ]
 
@@ -179,13 +179,14 @@ class AgentEvolutionManager:
         self.db_path = db_path or os.path.join(os.path.dirname(__file__), "..", "..", "evolution_storage.db")
         self.gating_network = SoftmaxGatingNetwork()
         self.active_epoch = "epoch_v1.0_baseline"
-        self.total_evolution_rounds = 12
+        self.total_evolution_rounds = 0
         self.harness_baseline_status = "STABLE"
         self.learned_rules: List[str] = list(INITIAL_RULES)
         self.employees_state: Dict[str, Dict[str, Any]] = {
             emp["role_id"]: dict(emp) for emp in INITIAL_EMPLOYEES
         }
         self.snapshots: List[EvolutionSnapshotModel] = []
+
 
         self._init_sqlite()
         self._sync_weights_to_employees()
@@ -334,18 +335,38 @@ class AgentEvolutionManager:
         self.gating_network.reset_to_default()
         self.employees_state = {emp["role_id"]: dict(emp) for emp in INITIAL_EMPLOYEES}
         self.learned_rules = list(INITIAL_RULES)
+        self.total_evolution_rounds = 0
+        self.snapshots = []
         self.active_epoch = "epoch_v1.0_golden_baseline"
         self.harness_baseline_status = "ROLLED_BACK"
         self._sync_weights_to_employees()
+        self._clear_sqlite()
         logger.warning("已触发一键熔断回滚至黄金基准版本！")
         return self.get_team_status()
 
     def reset_team(self) -> TeamEvolutionStatusModel:
-        """恢复出厂默认配置"""
+        """恢复出厂默认配置 (所有战绩归零、等级重置为 Lv.1、话语权均分、演进轮数归零)"""
         self.gating_network.reset_to_default()
         self.employees_state = {emp["role_id"]: dict(emp) for emp in INITIAL_EMPLOYEES}
         self.learned_rules = list(INITIAL_RULES)
+        self.total_evolution_rounds = 0
+        self.snapshots = []
         self.active_epoch = "epoch_v1.0_factory_reset"
         self.harness_baseline_status = "STABLE"
         self._sync_weights_to_employees()
+        self._clear_sqlite()
+        logger.info("已彻底恢复出厂初始设置：战绩全部归零，话语权均匀重置！")
         return self.get_team_status()
+
+    def _clear_sqlite(self):
+        """清空本地 SQLite 演进存储表"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM evolution_snapshots")
+            cursor.execute("DELETE FROM employee_profiles")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning("清空演进数据库异常: %s", e)
+

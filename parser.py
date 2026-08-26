@@ -404,22 +404,22 @@ class RobustJSONParser:
 
     @classmethod
     def _normalize_fields(cls, d: Dict[str, Any], symbol: str) -> Dict[str, Any]:
-        """将字段名映射至标准名称并进行前置自愈"""
+        """将字段名映射至标准名称并执行全量深度自愈补齐 (SSOT Contract First)"""
         res = dict(d)
 
-        # 别名映射
+        # 1. 基础标示与时间戳
         if "analysis_uuid" in res and "analysis_id" not in res:
             res["analysis_id"] = res.pop("analysis_uuid")
-        if "analysis_id" not in res:
+        if "analysis_id" not in res or not res["analysis_id"]:
             res["analysis_id"] = str(uuid.uuid4())
 
-        if "symbol" not in res:
+        if "symbol" not in res or not res["symbol"]:
             res["symbol"] = symbol
 
         if "timestamp" not in res:
             res["timestamp"] = int(datetime.utcnow().timestamp() * 1000)
 
-        # market_regime 模糊与自然语言自愈
+        # 2. market_regime 模糊自愈
         reg_val = str(res.get("market_regime") or res.get("market_state") or "").upper()
         if reg_val in ["TRENDING_UP", "TRENDING_DOWN", "RANGING", "VOLATILE_BREAKOUT"]:
             res["market_regime"] = reg_val
@@ -431,14 +431,54 @@ class RobustJSONParser:
             res["market_regime"] = "VOLATILE_BREAKOUT"
         else:
             res["market_regime"] = "RANGING"
+        res.pop("market_state", None)
 
-        if "market_state" in res and "market_regime" in res:
-            res.pop("market_state", None)
+        # 3. timeframe_analysis 结构自愈与骨架补齐
+        tf_analysis = res.get("timeframe_analysis")
+        if not isinstance(tf_analysis, dict):
+            tf_analysis = {}
+        for tf in ["tf_15m", "tf_1h", "tf_4h", "tf_1d"]:
+            item = tf_analysis.get(tf)
+            if not isinstance(item, dict):
+                tf_analysis[tf] = {
+                    "trend": "NEUTRAL_CHOPPY",
+                    "key_indicators_summary": "多周期指标结构均衡",
+                    "support_level": 0.0,
+                    "resistance_level": 0.0,
+                }
+            else:
+                if "trend" not in item or not item["trend"]:
+                    item["trend"] = "NEUTRAL_CHOPPY"
+                if "key_indicators_summary" not in item:
+                    item["key_indicators_summary"] = "正常"
+                item["support_level"] = float(item.get("support_level", 0.0))
+                item["resistance_level"] = float(item.get("resistance_level", 0.0))
+        res["timeframe_analysis"] = tf_analysis
 
-        if "action_plan" in res and "trade_plan" not in res:
-            res["trade_plan"] = res.pop("action_plan")
+        # 4. derivatives_sentiment 衍生品结构自愈
+        deriv = res.get("derivatives_sentiment")
+        if not isinstance(deriv, dict):
+            deriv = {}
+        bias_str = str(deriv.get("funding_rate_bias", "")).upper()
+        if bias_str not in ["EXTREME_POSITIVE", "MODERATE_POSITIVE", "NEUTRAL", "MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
+            if "EXTREME" in bias_str and ("POS" in bias_str or "LONG" in bias_str or "OVERHEAT" in bias_str):
+                deriv["funding_rate_bias"] = "EXTREME_POSITIVE"
+            elif "POS" in bias_str or "LONG" in bias_str or "BULL" in bias_str:
+                deriv["funding_rate_bias"] = "MODERATE_POSITIVE"
+            elif "EXTREME" in bias_str and ("NEG" in bias_str or "SHORT" in bias_str):
+                deriv["funding_rate_bias"] = "EXTREME_NEGATIVE"
+            elif "NEG" in bias_str or "SHORT" in bias_str or "BEAR" in bias_str:
+                deriv["funding_rate_bias"] = "MODERATE_NEGATIVE"
+            else:
+                deriv["funding_rate_bias"] = "NEUTRAL"
+        if "open_interest_interpretation" not in deriv:
+            deriv["open_interest_interpretation"] = "持仓与衍生品结构平稳"
+        if "long_short_ratio_state" not in deriv:
+            deriv["long_short_ratio_state"] = "多空比均衡"
+        deriv["sentiment_score"] = float(deriv.get("sentiment_score", 0.0))
+        res["derivatives_sentiment"] = deriv
 
-        # signal 结构规范化 (兼容模型直接输出字符串 action 的情形)
+        # 5. signal 交易信号标准化
         sig_raw = res.get("signal")
         if isinstance(sig_raw, str):
             act_upper = sig_raw.upper()
@@ -470,131 +510,30 @@ class RobustJSONParser:
             if "urgency" not in sig_raw:
                 sig_raw["urgency"] = "MEDIUM"
             res["signal"] = sig_raw
+        else:
+            res["signal"] = {
+                "action": "HOLD_WAIT",
+                "confidence": 0.0,
+                "urgency": "LOW"
+            }
 
-        # 预先处理 trade_plan 中的 percentage 与必填属性
-        if "trade_plan" in res and isinstance(res["trade_plan"], dict):
-            tp = res["trade_plan"]
-            tp_list = tp.get("take_profit_levels")
-            if isinstance(tp_list, list) and len(tp_list) > 0:
-                for item in tp_list:
-                    if isinstance(item, dict) and "percentage" in item:
-                        try:
-                            p_val = float(item["percentage"])
-                            if p_val > 1.0:
-                                item["percentage"] = round(p_val / 100.0, 4)
-                        except Exception:
-                            item["percentage"] = 0.5
-            else:
-                tp["take_profit_levels"] = [{"price": 0.0, "percentage": 1.0, "description": "目标止盈"}]
-
-            if "risk_reward_ratio" not in tp:
-                tp["risk_reward_ratio"] = 2.0
-            if "suggested_leverage" not in tp:
-                tp["suggested_leverage"] = int(res.get("target_leverage", res.get("leverage", 3)))
-            if "order_type" not in tp:
-                tp["order_type"] = "LIMIT"
-
-        # 预先处理 funding_rate_bias 模糊枚举
-        if "derivatives_sentiment" in res and isinstance(res["derivatives_sentiment"], dict):
-            bias_str = str(res["derivatives_sentiment"].get("funding_rate_bias", "")).upper()
-            if bias_str not in ["EXTREME_POSITIVE", "MODERATE_POSITIVE", "NEUTRAL", "MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
-                if "EXTREME" in bias_str and ("POS" in bias_str or "LONG" in bias_str or "OVERHEAT" in bias_str):
-                    res["derivatives_sentiment"]["funding_rate_bias"] = "EXTREME_POSITIVE"
-                elif "POS" in bias_str or "LONG" in bias_str or "BULL" in bias_str:
-                    res["derivatives_sentiment"]["funding_rate_bias"] = "MODERATE_POSITIVE"
-                elif "EXTREME" in bias_str and ("NEG" in bias_str or "SHORT" in bias_str):
-                    res["derivatives_sentiment"]["funding_rate_bias"] = "EXTREME_NEGATIVE"
-                elif "NEG" in bias_str or "SHORT" in bias_str or "BEAR" in bias_str:
-                    res["derivatives_sentiment"]["funding_rate_bias"] = "MODERATE_NEGATIVE"
-                else:
-                    res["derivatives_sentiment"]["funding_rate_bias"] = "NEUTRAL"
-
-        if "rationale" in res and "reasoning_details" not in res:
-            res["reasoning_details"] = res.pop("rationale")
-
-        return res
-
-    @classmethod
-    def _patch_missing_fields(cls, d: Dict[str, Any], symbol: str) -> Dict[str, Any]:
-        """智能补全缺失的关键结构"""
-        res = cls._normalize_fields(d, symbol)
-
-        # market_regime
-        if res.get("market_regime") not in ["TRENDING_UP", "TRENDING_DOWN", "RANGING", "VOLATILE_BREAKOUT"]:
-            res["market_regime"] = "RANGING"
-
-        # timeframe_analysis
-        tf_analysis = res.get("timeframe_analysis")
-        if not isinstance(tf_analysis, dict):
-            tf_analysis = {}
-        for tf in ["tf_15m", "tf_1h", "tf_4h", "tf_1d"]:
-            if tf not in tf_analysis or not isinstance(tf_analysis[tf], dict):
-                tf_analysis[tf] = {
-                    "trend": "NEUTRAL_CHOPPY",
-                    "key_indicators_summary": "自动补全中性指标",
-                    "support_level": 0.0,
-                    "resistance_level": 0.0,
-                }
-            else:
-                item = tf_analysis[tf]
-                if "trend" not in item:
-                    item["trend"] = "NEUTRAL_CHOPPY"
-                if "key_indicators_summary" not in item:
-                    item["key_indicators_summary"] = "正常"
-                item["support_level"] = float(item.get("support_level", 0.0))
-                item["resistance_level"] = float(item.get("resistance_level", 0.0))
-        res["timeframe_analysis"] = tf_analysis
-
-        # derivatives_sentiment
-        deriv = res.get("derivatives_sentiment")
-        if not isinstance(deriv, dict):
-            deriv = {}
-        bias_str = str(deriv.get("funding_rate_bias", "")).upper()
-        if bias_str not in ["EXTREME_POSITIVE", "MODERATE_POSITIVE", "NEUTRAL", "MODERATE_NEGATIVE", "EXTREME_NEGATIVE"]:
-            if "EXTREME" in bias_str and ("POS" in bias_str or "LONG" in bias_str or "OVERHEAT" in bias_str):
-                deriv["funding_rate_bias"] = "EXTREME_POSITIVE"
-            elif "POS" in bias_str or "LONG" in bias_str or "BULL" in bias_str:
-                deriv["funding_rate_bias"] = "MODERATE_POSITIVE"
-            elif "EXTREME" in bias_str and ("NEG" in bias_str or "SHORT" in bias_str):
-                deriv["funding_rate_bias"] = "EXTREME_NEGATIVE"
-            elif "NEG" in bias_str or "SHORT" in bias_str or "BEAR" in bias_str:
-                deriv["funding_rate_bias"] = "MODERATE_NEGATIVE"
-            else:
-                deriv["funding_rate_bias"] = "NEUTRAL"
-        if "open_interest_interpretation" not in deriv:
-            deriv["open_interest_interpretation"] = "数据正常，中性观察"
-        if "long_short_ratio_state" not in deriv:
-            deriv["long_short_ratio_state"] = "持仓比例均衡"
-        deriv["sentiment_score"] = float(deriv.get("sentiment_score", 0.0))
-        res["derivatives_sentiment"] = deriv
-
-        # signal
-        sig = res.get("signal")
-        if not isinstance(sig, dict):
-            sig = {}
-        if sig.get("action") not in ["BUY_LONG", "SELL_SHORT", "CLOSE_POSITION", "HOLD_WAIT"]:
-            sig["action"] = "HOLD_WAIT"
-        sig["confidence"] = float(sig.get("confidence", 0.0))
-        if sig.get("urgency") not in ["LOW", "MEDIUM", "HIGH"]:
-            sig["urgency"] = "LOW"
-        res["signal"] = sig
-
-        # trade_plan
+        # 6. trade_plan 交易计划标准化与自愈
+        if "action_plan" in res and "trade_plan" not in res:
+            res["trade_plan"] = res.pop("action_plan")
         tp = res.get("trade_plan")
         if not isinstance(tp, dict):
             tp = {}
+        
         er = tp.get("entry_range")
         if not isinstance(er, list) or len(er) != 2:
             tp["entry_range"] = [0.0, 0.0]
         else:
             tp["entry_range"] = [float(er[0]), float(er[1])]
 
-        tp_levels = tp.get("take_profit_levels")
-        if not isinstance(tp_levels, list) or not tp_levels:
-            tp["take_profit_levels"] = [{"price": 0.0, "percentage": 1.0, "description": "无具体计划"}]
-        else:
+        tp_list = tp.get("take_profit_levels")
+        if isinstance(tp_list, list) and len(tp_list) > 0:
             cleaned_tpl = []
-            for item in tp_levels:
+            for item in tp_list:
                 if isinstance(item, dict):
                     pct = float(item.get("percentage", 1.0))
                     if pct > 1.0:
@@ -603,38 +542,47 @@ class RobustJSONParser:
                     cleaned_tpl.append({
                         "price": float(item.get("price", 0.0)),
                         "percentage": round(pct, 4),
-                        "description": str(item.get("description", "止盈目标")),
+                        "description": str(item.get("description", "分批止盈目标")),
                     })
-            tp["take_profit_levels"] = cleaned_tpl or [{"price": 0.0, "percentage": 1.0, "description": "无具体计划"}]
+            tp["take_profit_levels"] = cleaned_tpl or [{"price": 0.0, "percentage": 1.0, "description": "目标止盈"}]
+        else:
+            tp["take_profit_levels"] = [{"price": 0.0, "percentage": 1.0, "description": "目标止盈"}]
 
         tp["stop_loss_price"] = float(tp.get("stop_loss_price", 0.0))
-        tp["risk_reward_ratio"] = float(tp.get("risk_reward_ratio", 0.0))
-        tp["suggested_leverage"] = max(1, min(int(tp.get("suggested_leverage", 1)), 20))
-        if tp.get("order_type") not in ["LIMIT", "MARKET", "TRIGGER_LIMIT"]:
-            tp["order_type"] = "LIMIT"
+        tp["risk_reward_ratio"] = float(tp.get("risk_reward_ratio", 2.0))
+        tp["suggested_leverage"] = max(1, min(int(tp.get("suggested_leverage", res.get("target_leverage", res.get("leverage", 3)))), 20))
+        if tp.get("order_type") not in ["POST_ONLY", "LIMIT", "MARKET", "TRIGGER_LIMIT"]:
+            tp["order_type"] = "POST_ONLY"
         res["trade_plan"] = tp
 
-        # risk_assessment
+        # 7. risk_assessment 风控评估骨架
         ra = res.get("risk_assessment")
         if not isinstance(ra, dict):
             ra = {}
         kr = ra.get("key_risks")
         if not isinstance(kr, list) or not kr:
-            ra["key_risks"] = ["市场正常波动风险"]
+            ra["key_risks"] = ["市场正常波动与流动性风险"]
         else:
             ra["key_risks"] = [str(x) for x in kr]
         if "invalidation_condition" not in ra:
-            ra["invalidation_condition"] = "触及止损或结构改变"
+            ra["invalidation_condition"] = "价格跌破/突破关键结构线或触及硬止损"
         ra["max_holding_time_hours"] = float(ra.get("max_holding_time_hours", 24.0))
         res["risk_assessment"] = ra
 
-        # reasoning
-        if "reasoning_summary" not in res:
-            res["reasoning_summary"] = "系统完成综合研判，维持纪律执行。"
-        if "reasoning_details" not in res:
-            res["reasoning_details"] = "多周期指标与衍生品综合推导完成。"
+        # 8. reasoning 推理与总结说明
+        if "rationale" in res and "reasoning_details" not in res:
+            res["reasoning_details"] = res.pop("rationale")
+        if "reasoning_summary" not in res or not res["reasoning_summary"]:
+            res["reasoning_summary"] = str(res.get("reasoning", "系统完成全周期与盘口微观推演，严格遵循交易纪律。"))
+        if "reasoning_details" not in res or not res["reasoning_details"]:
+            res["reasoning_details"] = "综合 15m/1h/4h 技术均线、订单簿深度与衍生品持仓推导完成。"
 
         return res
+
+    @classmethod
+    def _patch_missing_fields(cls, d: Dict[str, Any], symbol: str) -> Dict[str, Any]:
+        """智能补全缺失的关键结构 (直接复用前置深度自愈)"""
+        return cls._normalize_fields(d, symbol)
 
     # =========================================================================
     # 4. 安全熔断兜底对象生成

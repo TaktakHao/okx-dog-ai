@@ -25,6 +25,11 @@ OKX-Dog AI 是面向加密资产与 TradFi 衍生品交易的决策大脑，负�
    - **Softmax 动态加权门控 (`gating_network.py`)**：带 $[8\%, 35\%]$ 上下限约束的动态话语权分配，避免单一角色垄断；
    - **AI 员工档案与演进中枢 (`evolution_manager.py`)**：管理 6 位拟人化量化员工（冲锋多头、铁血风控、全球情报、链上巨鲸、盘口狙击、量化仲裁）档案、等级晋升与自主避坑口诀库；
    - **Harness 防退化守护与自动熔断**：500+ 极端行情黄金基准校验，连续 3 笔亏损秒级回滚至黄金稳定基线。
+6. **模型微调数据沉淀、两级精炼与实习生插槽 (`dataset/` & `agent/evolution/intern_slot.py`)**:
+   - **自动化数据收集器 (`dataset/collector.py`)**：沉淀多周期特征快照、6 专家论证与真实盘口盈亏 (Chosen / Rejected)；
+   - **大模型数据精炼师 (`dataset/refiner.py`)**：消除冗余客套、提炼高密度 `<think>` 思考链并注入事后诸葛亮 (Hindsight) 归因复盘；
+   - **标准数据集导出器 (`dataset/exporter.py`)**：一键生成 Alpaca SFT 与 DPO 对齐 JSONL，供 Google Colab 极速微调；
+   - **Ollama 实习生专有插槽 (`agent/evolution/intern_slot.py`)**：即插即用接入微调后的开源模型，采用双轨影子推演 (Shadow Mode) 异步模拟实战并核算虚拟战绩，支撑以老带新持续演进。
 
 ## 快速启动与依赖
 

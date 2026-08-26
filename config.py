@@ -43,6 +43,16 @@ class AIModelConfig(BaseSettings):
     # 是否开启思维链解析
     ENABLE_COT_STREAMING: bool = True
 
+    # 实习生专有插槽 (Intern Slot - 用于开源微调模型通过 Ollama / 本地部署接入进行老带新)
+    INTERN_ENABLED: bool = Field(default=False, description="是否启用实习生模型影子推演")
+    INTERN_PROVIDER: Literal["ollama", "openai", "custom"] = Field(default="ollama", description="实习生模型服务提供方")
+    INTERN_BASE_URL: str = Field(default="http://127.0.0.1:11434/v1", description="实习生模型 Ollama / vLLM 接口地址")
+    INTERN_API_KEY: str = Field(default="ollama", description="实习生模型 API Key (Ollama 可随意填写)")
+    INTERN_MODEL_NAME: str = Field(default="okx-dog-intern", description="实习生微调模型名称")
+    INTERN_TEMPERATURE: float = Field(default=0.2, ge=0.0, le=2.0)
+    INTERN_MAX_TOKENS: int = Field(default=2048, ge=256, le=8192)
+    INTERN_SHADOW_MODE: bool = Field(default=True, description="是否开启影子推演模式 (只记录虚拟战绩不直接发单)")
+
     model_config = SettingsConfigDict(
         env_file=[str(ROOT_DIR / ".env"), str(AI_DIR / ".env"), ".env"],
         env_file_encoding="utf-8",

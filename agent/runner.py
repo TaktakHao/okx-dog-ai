@@ -15,11 +15,21 @@ from .state import QuantTraderState
 
 try:
     from ..schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
+    from ..dataset.collector import dataset_collector
+    from .evolution.intern_slot import intern_slot_manager
 except (ImportError, ValueError):
     try:
         from okx_dog_ai.schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
+        from okx_dog_ai.dataset.collector import dataset_collector
+        from okx_dog_ai.agent.evolution.intern_slot import intern_slot_manager
     except (ImportError, ValueError):
         from schemas import AIAnalysisResponse, MarketContextSnapshot, SSEStreamChunk
+        try:
+            from dataset.collector import dataset_collector
+            from agent.evolution.intern_slot import intern_slot_manager
+        except Exception:
+            dataset_collector = None
+            intern_slot_manager = None
 
 logger = logging.getLogger("okx_dog.ai.agent.runner")
 
@@ -70,6 +80,44 @@ class QuantTraderAgentRunner:
         }
         return initial_state
 
+    def _dispatch_shadow_and_collection(
+        self,
+        snapshot: Dict[str, Any],
+        final_response_obj: AIAnalysisResponse,
+        thinking_steps: Optional[List[Dict[str, Any]]] = None,
+    ):
+        """异步分发数据收集与实习生影子推演 (零阻塞主决策链路)"""
+        try:
+            resp_dict = final_response_obj.model_dump() if hasattr(final_response_obj, "model_dump") else dict(final_response_obj)
+            current_price = float(snapshot.get("current_price", 0.0))
+            symbol = snapshot.get("symbol", "BTC-USDT-SWAP")
+
+            # 1. 沉淀数据
+            if dataset_collector:
+                dataset_collector.record_decision_sample(
+                    symbol=symbol,
+                    current_price=current_price,
+                    market_snapshot=snapshot,
+                    final_response=resp_dict,
+                    thinking_steps=thinking_steps,
+                    analysis_id=resp_dict.get("analysis_id"),
+                )
+
+            # 2. 触发实习生影子推演
+            if intern_slot_manager and intern_slot_manager.is_enabled():
+                import asyncio
+                asyncio.create_task(
+                    intern_slot_manager.trigger_shadow_inference(
+                        symbol=symbol,
+                        current_price=current_price,
+                        market_snapshot=snapshot,
+                        senior_response=resp_dict,
+                        analysis_id=resp_dict.get("analysis_id"),
+                    )
+                )
+        except Exception as e:
+            logger.warning("数据沉淀或实习生推演触发失败 (不影响主链路): %s", e)
+
     async def run(
         self,
         snapshot: Union[MarketContextSnapshot, Dict[str, Any]],
@@ -88,8 +136,19 @@ class QuantTraderAgentRunner:
             raise RuntimeError("LangGraph 状态机未成功生成 final_response")
 
         if isinstance(final_dict, AIAnalysisResponse):
-            return final_dict
-        return AIAnalysisResponse(**final_dict)
+            resp_obj = final_dict
+        else:
+            resp_obj = AIAnalysisResponse(**final_dict)
+
+        # 异步沉淀与触发实习生推演
+        snap_dict = snapshot.model_dump() if hasattr(snapshot, "model_dump") else dict(snapshot)
+        self._dispatch_shadow_and_collection(
+            snapshot=snap_dict,
+            final_response_obj=resp_obj,
+            thinking_steps=final_state.get("thinking_steps", []),
+        )
+
+        return resp_obj
 
     async def run_stream(
         self,
@@ -109,12 +168,14 @@ class QuantTraderAgentRunner:
         )
 
         final_response_obj: Optional[AIAnalysisResponse] = None
+        accumulated_steps: List[Dict[str, Any]] = []
 
         # 逐节点流式执行
         async for output in self.graph.astream(initial_state, stream_mode="updates"):
             for node_name, node_state_delta in output.items():
                 steps = node_state_delta.get("thinking_steps", [])
                 for step in steps:
+                    accumulated_steps.append(step)
                     thought_text = step.get("thought", "")
                     stage_name = step.get("stage_name", node_name)
                     yield SSEStreamChunk(
@@ -131,6 +192,14 @@ class QuantTraderAgentRunner:
                         final_response_obj = AIAnalysisResponse(**final_data)
 
         if final_response_obj:
+            # 异步沉淀与触发实习生推演
+            snap_dict = snapshot.model_dump() if hasattr(snapshot, "model_dump") else dict(snapshot)
+            self._dispatch_shadow_and_collection(
+                snapshot=snap_dict,
+                final_response_obj=final_response_obj,
+                thinking_steps=accumulated_steps,
+            )
+
             yield SSEStreamChunk(
                 event="done",
                 data=final_response_obj,

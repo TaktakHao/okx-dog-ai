@@ -51,6 +51,7 @@ class TeamEvolutionStatusModel(BaseModel):
     harness_baseline_status: str
     last_updated_time: int
     recent_learned_rules: List[str]
+    intern_profile: Optional[Dict[str, Any]] = None
 
 
 class EvolutionSnapshotModel(BaseModel):
@@ -187,8 +188,8 @@ class AgentEvolutionManager:
         }
         self.snapshots: List[EvolutionSnapshotModel] = []
 
-
         self._init_sqlite()
+        self._load_from_sqlite()
         self._sync_weights_to_employees()
 
     @classmethod
@@ -219,10 +220,140 @@ class AgentEvolutionManager:
                     updated_time INTEGER
                 )
             """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS evolution_meta (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT,
+                    updated_time INTEGER
+                )
+            """)
             conn.commit()
             conn.close()
         except Exception as e:
             logger.warning("初始化进化数据库表异常 (将使用内存模式): %s", e)
+
+    def _load_from_sqlite(self):
+        """从 SQLite 本地库恢复员工档案、历史快照与沉淀避坑口诀"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # 1. 恢复员工档案
+            cursor.execute("SELECT role_id, profile_json FROM employee_profiles")
+            emp_rows = cursor.fetchall()
+            if emp_rows:
+                for rid, p_json in emp_rows:
+                    try:
+                        p_dict = json.loads(p_json)
+                        # 兼容与纠偏历史胜率数据 (严格对齐 0.0 ~ 1.0 契约)
+                        p_tot = p_dict.get("wins_count", 0) + p_dict.get("losses_count", 0)
+                        if p_tot > 0:
+                            p_dict["win_rate_7d"] = round(p_dict.get("wins_count", 0) / p_tot, 4)
+                        elif p_dict.get("win_rate_7d", 0.0) > 1.0:
+                            p_dict["win_rate_7d"] = round(p_dict["win_rate_7d"] / 100.0, 4)
+                        if rid in self.employees_state:
+                            self.employees_state[rid].update(p_dict)
+                        else:
+                            self.employees_state[rid] = p_dict
+                    except Exception:
+                        pass
+                logger.info(f"成功从 SQLite 恢复 {len(emp_rows)} 位 AI 员工战绩与档案")
+
+            # 2. 恢复演进元数据与规则
+            cursor.execute("SELECT key, value_json FROM evolution_meta")
+            meta_rows = cursor.fetchall()
+            for k, val_json in meta_rows:
+                try:
+                    val = json.loads(val_json)
+                    if k == "total_evolution_rounds":
+                        self.total_evolution_rounds = int(val)
+                    elif k == "active_epoch":
+                        self.active_epoch = str(val)
+                    elif k == "learned_rules" and isinstance(val, list) and val:
+                        self.learned_rules = val
+                    elif k == "harness_baseline_status":
+                        self.harness_baseline_status = str(val)
+                    elif k == "gating_scores" and isinstance(val, dict):
+                        for r, sc in val.items():
+                            self.gating_network._scores[r] = float(sc)
+                        self.gating_network._weights = self.gating_network._compute_bounded_softmax(self.gating_network._scores)
+                except Exception:
+                    pass
+
+            # 3. 恢复历史快照
+            cursor.execute("SELECT epoch_id, timestamp, weights_json, learned_rules_json, harness_score, description FROM evolution_snapshots ORDER BY timestamp ASC LIMIT 50")
+            snap_rows = cursor.fetchall()
+            if snap_rows:
+                loaded_snaps = []
+                for s in snap_rows:
+                    try:
+                        loaded_snaps.append(EvolutionSnapshotModel(
+                            epoch_id=s[0],
+                            timestamp=s[1],
+                            weights=json.loads(s[2]),
+                            learned_rules=json.loads(s[3]),
+                            harness_score=float(s[4]),
+                            description=s[5]
+                        ))
+                    except Exception:
+                        pass
+                self.snapshots = loaded_snaps[-20:]
+
+            conn.close()
+        except Exception as e:
+            logger.warning(f"从 SQLite 加载演进数据跳过 (使用默认初始配置): {e}")
+
+    def _save_to_sqlite(self):
+        """将当前员工档案、演进轮次、门控权重与沉淀规则持久化写入 SQLite"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            now_ms = int(time.time() * 1000)
+
+            # 1. 保存员工档案
+            for rid, emp in self.employees_state.items():
+                cursor.execute(
+                    "INSERT OR REPLACE INTO employee_profiles (role_id, profile_json, updated_time) VALUES (?, ?, ?)",
+                    (rid, json.dumps(emp, ensure_ascii=False), now_ms)
+                )
+
+            # 2. 保存演进元数据
+            meta_data = {
+                "total_evolution_rounds": self.total_evolution_rounds,
+                "active_epoch": self.active_epoch,
+                "learned_rules": self.learned_rules,
+                "harness_baseline_status": self.harness_baseline_status,
+                "gating_scores": self.gating_network._scores,
+            }
+            for k, val in meta_data.items():
+                cursor.execute(
+                    "INSERT OR REPLACE INTO evolution_meta (key, value_json, updated_time) VALUES (?, ?, ?)",
+                    (k, json.dumps(val, ensure_ascii=False), now_ms)
+                )
+
+            # 3. 保存最新快照
+            if self.snapshots:
+                latest_snap = self.snapshots[-1]
+                cursor.execute(
+                    """
+                    INSERT OR REPLACE INTO evolution_snapshots 
+                    (epoch_id, timestamp, weights_json, learned_rules_json, harness_score, description)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        latest_snap.epoch_id,
+                        latest_snap.timestamp,
+                        json.dumps(latest_snap.weights, ensure_ascii=False),
+                        json.dumps(latest_snap.learned_rules, ensure_ascii=False),
+                        latest_snap.harness_score,
+                        latest_snap.description
+                    )
+                )
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"持久化演进数据至 SQLite 异常: {e}")
 
     def _sync_weights_to_employees(self):
         """将门控网络计算的动态话语权同步到员工档案中"""
@@ -232,17 +363,64 @@ class AgentEvolutionManager:
                 self.employees_state[role_id]["weight_percent"] = weight
 
     def get_team_status(self) -> TeamEvolutionStatusModel:
-        """获取团队当前档案看板数据"""
+        """获取团队当前档案看板数据 (包含 6 位专家与实习生影子战绩)"""
         self._sync_weights_to_employees()
         members = [AgentEmployeeModel(**emp) for emp in self.employees_state.values()]
+
+        intern_dict = None
+        try:
+            from .intern_slot import intern_slot_manager
+            intern_dict = intern_slot_manager.get_performance_profile().model_dump()
+        except Exception:
+            pass
+
         return TeamEvolutionStatusModel(
             team_members=members,
             active_epoch=self.active_epoch,
             total_evolution_rounds=self.total_evolution_rounds,
             harness_baseline_status=self.harness_baseline_status,
             last_updated_time=int(time.time() * 1000),
-            recent_learned_rules=self.learned_rules
+            recent_learned_rules=self.learned_rules,
+            intern_profile=intern_dict
         )
+
+    def _derive_default_opinions(self, pos_side: str, realized_pnl: float, is_crisis_defended: bool) -> Dict[str, Dict[str, Any]]:
+        """当外部未传入完整 6 角色 opinions 时，依据交易方向与损益自动推导基准立场快照"""
+        is_long = pos_side.upper() in ("LONG", "BUY")
+        is_win = realized_pnl > 0
+
+        return {
+            "bull_specialist": {
+                "role_name": "冲锋多头分析师",
+                "stance": "BULLISH" if is_long else "BEARISH",
+                "confidence": 0.85 if is_long else 0.40
+            },
+            "bear_critic": {
+                "role_name": "铁血风控挑刺官",
+                "stance": "BEARISH" if (not is_long or is_crisis_defended or not is_win) else "NEUTRAL",
+                "confidence": 0.80 if (not is_win or is_crisis_defended) else 0.50
+            },
+            "macro_news": {
+                "role_name": "全球资讯情报员",
+                "stance": "BULLISH" if is_win else "NEUTRAL",
+                "confidence": 0.65
+            },
+            "onchain_analyst": {
+                "role_name": "链上主力侦察员",
+                "stance": "BULLISH" if is_long else "BEARISH",
+                "confidence": 0.70
+            },
+            "micro_sniper": {
+                "role_name": "微观盘口狙击手",
+                "stance": "BULLISH" if is_long else "BEARISH",
+                "confidence": 0.75
+            },
+            "chief_arbiter": {
+                "role_name": "首席量化仲裁官",
+                "stance": "BULLISH" if is_long else "BEARISH",
+                "confidence": 0.80
+            }
+        }
 
     def process_trade_reinforcement(
         self,
@@ -253,18 +431,32 @@ class AgentEvolutionManager:
         exit_price: float,
         sl_price: float,
         realized_pnl: float,
-        mfe_pct: float,
-        mae_pct: float,
-        agent_opinions: Dict[str, Dict[str, Any]],
+        mfe_pct: float = 0.0,
+        mae_pct: float = 0.0,
+        agent_opinions: Optional[Dict[str, Dict[str, Any]]] = None,
         is_crisis_defended: bool = False
     ) -> MultiAgentRewardOutcome:
         """
-        核心闭环：交易平仓后执行复合强化奖励与员工进化
+        核心闭环：交易平仓后执行复合强化奖励、战绩更新与实战避坑口诀沉淀
         """
+        # 若未提供 opinions，自动补充推导
+        if not agent_opinions:
+            agent_opinions = self._derive_default_opinions(pos_side, realized_pnl, is_crisis_defended)
+
+        # 估算 MFE / MAE 兜底
+        if mfe_pct == 0.0 and mae_pct == 0.0 and entry_price > 0:
+            price_diff_pct = (exit_price - entry_price) / entry_price if pos_side.upper() in ("LONG", "BUY") else (entry_price - exit_price) / entry_price
+            if price_diff_pct > 0:
+                mfe_pct = price_diff_pct * 1.2
+                mae_pct = -0.005
+            else:
+                mfe_pct = 0.004
+                mae_pct = price_diff_pct
+
         outcome = RewardEngine.evaluate_trade_outcome(
             trade_id=trade_id,
             symbol=symbol,
-            pos_side=pos_side,
+            pos_side=pos_side.upper(),
             entry_price=entry_price,
             exit_price=exit_price,
             sl_price=sl_price,
@@ -275,10 +467,10 @@ class AgentEvolutionManager:
             is_crisis_defended=is_crisis_defended
         )
 
-        # 1. 增量更新 Softmax 门控网络
+        # 1. 增量更新 Softmax 门控网络战力分与话语权
         self.gating_network.update_scores_from_rewards(outcome.breakdowns)
 
-        # 2. 增量更新员工经验与等级
+        # 2. 增量更新员工经验、战绩与等级
         for bd in outcome.breakdowns:
             rid = bd.role_id
             if rid in self.employees_state:
@@ -294,21 +486,45 @@ class AgentEvolutionManager:
 
                 total = emp["wins_count"] + emp["losses_count"]
                 if total > 0:
-                    emp["win_rate_7d"] = round(emp["wins_count"] / total, 2)
+                    emp["win_rate_7d"] = round(emp["wins_count"] / total, 4)
 
-                # 升级逻辑 (每积累 50 分升 1 级)
-                new_lvl = min(10, max(1, 1 + int(emp["contribution_score"] / 50.0)))
+                # 升级逻辑 (每积累 30 分升 1 级，最高 10 级)
+                new_lvl = min(10, max(1, 1 + int(emp["contribution_score"] / 30.0)))
                 emp["level"] = new_lvl
 
                 if bd.achievement_note:
                     emp["recent_achievement"] = bd.achievement_note
 
+        # 3. 动态提炼避坑口诀与实战规则沉淀
+        coin_tag = symbol.split("-")[0] if "-" in symbol else symbol
+        new_rule: Optional[str] = None
+        if realized_pnl < 0:
+            if pos_side.upper() in ("LONG", "BUY"):
+                new_rule = f"在 {coin_tag} 破位跌破止损点后坚决不盲目左侧接飞刀，耐心等待 1h/4h 均线重构金叉"
+            else:
+                new_rule = f"在 {coin_tag} 放量突破阻力位后坚决不可逆势摸顶，严格顺应中短周期多头主升浪"
+        elif is_crisis_defended:
+            new_rule = f"当 {coin_tag} 资金费率过热或插针异动时，铁血风控挑刺官一票否决开仓指令，保护本金安全"
+        elif realized_pnl > 0 and abs(mae_pct) > 0.015:
+            new_rule = f"{coin_tag} 浮盈超过 1.0R 时强制锁定移动保本线，杜绝盈利单因贪心回吐变成亏损"
+
+        if new_rule and new_rule not in self.learned_rules:
+            self.learned_rules.insert(0, new_rule)
+            if len(self.learned_rules) > 8:
+                self.learned_rules.pop()
+
         self._sync_weights_to_employees()
         self.total_evolution_rounds += 1
         self.active_epoch = f"epoch_v1.{self.total_evolution_rounds}_{time.strftime('%Y%m%d')}"
 
-        # 3. 自动生成快照
+        # 4. 自动生成快照并持久化落库
         self._save_snapshot(description=outcome.summary)
+        self._save_to_sqlite()
+
+        logger.info(
+            f"【AI 员工进化中枢】第 {self.total_evolution_rounds} 轮演进完成: 标的 {symbol}, "
+            f"盈亏 {realized_pnl:+.2f} USDT, 最新话语权: {self.gating_network.get_weights()}"
+        )
 
         return outcome
 
@@ -341,6 +557,7 @@ class AgentEvolutionManager:
         self.harness_baseline_status = "ROLLED_BACK"
         self._sync_weights_to_employees()
         self._clear_sqlite()
+        self._save_to_sqlite()
         logger.warning("已触发一键熔断回滚至黄金基准版本！")
         return self.get_team_status()
 
@@ -355,6 +572,7 @@ class AgentEvolutionManager:
         self.harness_baseline_status = "STABLE"
         self._sync_weights_to_employees()
         self._clear_sqlite()
+        self._save_to_sqlite()
         logger.info("已彻底恢复出厂初始设置：战绩全部归零，话语权均匀重置！")
         return self.get_team_status()
 
@@ -365,8 +583,10 @@ class AgentEvolutionManager:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM evolution_snapshots")
             cursor.execute("DELETE FROM employee_profiles")
+            cursor.execute("DELETE FROM evolution_meta")
             conn.commit()
             conn.close()
         except Exception as e:
             logger.warning("清空演进数据库异常: %s", e)
+
 

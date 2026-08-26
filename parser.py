@@ -404,7 +404,7 @@ class RobustJSONParser:
 
     @classmethod
     def _normalize_fields(cls, d: Dict[str, Any], symbol: str) -> Dict[str, Any]:
-        """将字段名映射至标准名称"""
+        """将字段名映射至标准名称并进行前置自愈"""
         res = dict(d)
 
         # 别名映射
@@ -419,16 +419,63 @@ class RobustJSONParser:
         if "timestamp" not in res:
             res["timestamp"] = int(datetime.utcnow().timestamp() * 1000)
 
-        if "market_state" in res and "market_regime" not in res:
-            res["market_regime"] = res.pop("market_state")
+        # market_regime 模糊与自然语言自愈
+        reg_val = str(res.get("market_regime") or res.get("market_state") or "").upper()
+        if reg_val in ["TRENDING_UP", "TRENDING_DOWN", "RANGING", "VOLATILE_BREAKOUT"]:
+            res["market_regime"] = reg_val
+        elif any(k in reg_val for k in ["BULL", "UP", "LONG", "RISE"]):
+            res["market_regime"] = "TRENDING_UP"
+        elif any(k in reg_val for k in ["BEAR", "DOWN", "SHORT", "FALL"]):
+            res["market_regime"] = "TRENDING_DOWN"
+        elif any(k in reg_val for k in ["BREAKOUT", "VOLATILE", "SURGE"]):
+            res["market_regime"] = "VOLATILE_BREAKOUT"
+        else:
+            res["market_regime"] = "RANGING"
+
+        if "market_state" in res and "market_regime" in res:
+            res.pop("market_state", None)
 
         if "action_plan" in res and "trade_plan" not in res:
             res["trade_plan"] = res.pop("action_plan")
 
-        # 预先处理 trade_plan 中的 percentage
+        # signal 结构规范化 (兼容模型直接输出字符串 action 的情形)
+        sig_raw = res.get("signal")
+        if isinstance(sig_raw, str):
+            act_upper = sig_raw.upper()
+            if "BUY" in act_upper or "LONG" in act_upper:
+                act = "BUY_LONG"
+            elif "SELL" in act_upper or "SHORT" in act_upper:
+                act = "SELL_SHORT"
+            elif "CLOSE" in act_upper:
+                act = "CLOSE_POSITION"
+            else:
+                act = "HOLD_WAIT"
+            conf = float(res.get("confidence", 0.8))
+            res["signal"] = {
+                "action": act,
+                "confidence": conf,
+                "urgency": "MEDIUM"
+            }
+        elif isinstance(sig_raw, dict):
+            act_val = str(sig_raw.get("action", "HOLD_WAIT")).upper()
+            if "BUY" in act_val or "LONG" in act_val:
+                sig_raw["action"] = "BUY_LONG"
+            elif "SELL" in act_val or "SHORT" in act_val:
+                sig_raw["action"] = "SELL_SHORT"
+            elif "CLOSE" in act_val:
+                sig_raw["action"] = "CLOSE_POSITION"
+            else:
+                sig_raw["action"] = "HOLD_WAIT"
+            sig_raw["confidence"] = float(sig_raw.get("confidence", res.get("confidence", 0.8)))
+            if "urgency" not in sig_raw:
+                sig_raw["urgency"] = "MEDIUM"
+            res["signal"] = sig_raw
+
+        # 预先处理 trade_plan 中的 percentage 与必填属性
         if "trade_plan" in res and isinstance(res["trade_plan"], dict):
-            tp_list = res["trade_plan"].get("take_profit_levels")
-            if isinstance(tp_list, list):
+            tp = res["trade_plan"]
+            tp_list = tp.get("take_profit_levels")
+            if isinstance(tp_list, list) and len(tp_list) > 0:
                 for item in tp_list:
                     if isinstance(item, dict) and "percentage" in item:
                         try:
@@ -437,6 +484,15 @@ class RobustJSONParser:
                                 item["percentage"] = round(p_val / 100.0, 4)
                         except Exception:
                             item["percentage"] = 0.5
+            else:
+                tp["take_profit_levels"] = [{"price": 0.0, "percentage": 1.0, "description": "目标止盈"}]
+
+            if "risk_reward_ratio" not in tp:
+                tp["risk_reward_ratio"] = 2.0
+            if "suggested_leverage" not in tp:
+                tp["suggested_leverage"] = int(res.get("target_leverage", res.get("leverage", 3)))
+            if "order_type" not in tp:
+                tp["order_type"] = "LIMIT"
 
         # 预先处理 funding_rate_bias 模糊枚举
         if "derivatives_sentiment" in res and isinstance(res["derivatives_sentiment"], dict):

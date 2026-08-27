@@ -245,6 +245,26 @@ class AntigravityBridge:
 
         return False
 
+    @staticmethod
+    def normalize_effort(model: Optional[str], effort: Optional[str]) -> str:
+        """
+        根据目标大模型类型自适应规范化 effort 参数:
+        - Pro 系列模型 (如 gemini-3.1-pro, gemini-2.5-pro): 仅支持 'low' 与 'high' (缺省或 medium 自动映射为 high)
+        - Flash 系列及其他模型 (如 gemini-3.7-flash): 支持 'low', 'medium', 'high' (缺省为 medium)
+        """
+        m = (model or "").lower()
+        eff = (effort or "").lower().strip()
+
+        if "pro" in m:
+            if eff in ("low", "high"):
+                return eff
+            # Pro 系列不支持 medium，若传入 medium 或空值自动适配为 high
+            return "high"
+
+        if eff in ("low", "medium", "high"):
+            return eff
+        return "medium"
+
     def _build_command(
         self,
         prompt: str,
@@ -252,7 +272,7 @@ class AntigravityBridge:
         effort: Optional[str] = None,
         model: Optional[str] = None,
     ) -> List[str]:
-        """构建 agy 执行命令行参数列表"""
+        """构建 agy 执行命令行参数列表 (自适应 effort 与 model 校验)"""
         cmd = [
             self.cli_path,
             "-p", prompt,
@@ -261,11 +281,10 @@ class AntigravityBridge:
             "--disable-slash-commands",
         ]
 
-        eff = effort or self.effort
-        if eff in ("low", "medium", "high"):
-            cmd.extend(["--effort", eff])
-
         target_model = model or self.model
+        eff = self.normalize_effort(target_model, effort or self.effort)
+        cmd.extend(["--effort", eff])
+
         if target_model:
             cmd.extend(["--model", target_model])
 
@@ -316,6 +335,9 @@ class AntigravityBridge:
             content = "".join(content_parts).strip()
             thinking = "".join(thinking_parts).strip()
             latency_ms = int((time.time() - start_time) * 1000)
+
+            if not content and not thinking:
+                raise AntigravityCLIError("Antigravity CLI 未返回任何有效响应内容，请检查模型名称与 effort 配置是否正确")
 
             logger.info(
                 f"[AntigravityBridge] 研判完成, 耗时={latency_ms}ms, "
@@ -418,11 +440,15 @@ class AntigravityBridge:
                 if process.stderr:
                     err_bytes = await process.stderr.read()
                     stderr_output = err_bytes.decode("utf-8", errors="replace").strip()
-                logger.warning(
-                    f"[AntigravityBridge] 子进程退出码非 0 ({process.returncode}): {stderr_output[:300]}"
-                )
+                err_msg = stderr_output or f"Antigravity CLI 子进程异常退出 (退出码: {process.returncode})"
+                logger.error(f"[AntigravityBridge] {err_msg}")
+                raise AntigravityCLIError(err_msg, return_code=process.returncode, stderr=stderr_output)
 
         except asyncio.CancelledError:
+            if process and process.returncode is None:
+                process.kill()
+            raise
+        except AntigravityCLIError:
             if process and process.returncode is None:
                 process.kill()
             raise

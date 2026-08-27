@@ -11,6 +11,8 @@ OKX-Dog AI 是面向加密资产与 TradFi 衍生品交易的决策大脑，负�
    - P0~P3 优先级动态预算裁剪与保护机制。
 2. **Antigravity CLI 本地极速引擎与 OpenAI 协议适配 (`llm_client.py` / `antigravity_bridge.py`)**:
    - 原生支持 Google Antigravity CLI (`agy`)，免 API Key 驱动本地极速研判；
+   - 智能自适应 Effort 协商：自动对齐 Flash 系列 (`low/medium/high`) 与 Pro 系列 (`low/high`) 思考预算，杜绝参数不兼容；
+   - 健壮的子进程生命周期管控与非零退出码精准错误透传，彻底杜绝假阳性；
    - 兼容 DeepSeek-R1 (deepseek-reasoner)、DeepSeek-V3、GPT-4o、Claude 等外部网关；
    - 进程级隔离沙盒 (`AntigravityIsolatedEnvManager`)，剔除全局无关 MCP/Skills 干扰。
 3. **多周期指标实时计算与微观特征工程 (`indicator_engine.py`)**:
@@ -31,9 +33,15 @@ OKX-Dog AI 是面向加密资产与 TradFi 衍生品交易的决策大脑，负�
    - **标准数据集导出器 (`dataset/exporter.py`)**：一键生成 Alpaca SFT 与 DPO 对齐 JSONL，供 Google Colab 极速微调；
    - **Ollama 实习生专有插槽 (`agent/evolution/intern_slot.py`)**：即插即用接入微调后的开源模型，采用双轨影子推演 (Shadow Mode) 异步模拟实战并核算虚拟战绩，支撑以老带新持续演进。
 
+7. **大模型自驱动反思问诊与角色战法自驱进化 (`agent/evolution/meta_doctor.py`)**:
+   - **大模型量化投资总监 (`LLMMetaDoctor`)**：每日盘后或一键触发时，调度 DeepSeek / GPT-4o 顶层大模型自动对 6 位 AI 员工进行失败案例病理剖析；
+   - **角色专属避坑硬约束 (`learned_rules`)**：自动为低胜率或失误角色生成精炼的专属战法口诀并落库，后续盘面决策与红蓝博弈（`adversarial_debater.py`）中作为硬约束热注入生效；
+   - **版本化自驱迭代**：演进版本号自动递增（`epoch_v1.x`），并提供历史完整反思长文报告查阅与安全回滚门禁。
+
 ## 快速启动与依赖
 
 ```bash
 # 安装依赖
 pip install -r requirements.txt
 ```
+

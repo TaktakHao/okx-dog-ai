@@ -44,11 +44,28 @@ async def adversarial_debate_node(state: QuantTraderState) -> Dict[str, Any]:
     spread_bps = float(micro_data.get("spread_bps", 1.0))
 
     # -------------------------------------------------------------
+    # 0. 动态加载角色自演化避坑规则 (Self-Evolved Rules)
+    # -------------------------------------------------------------
+    bull_rules = []
+    bear_rules = []
+    try:
+        from ..evolution.evolution_manager import AgentEvolutionManager
+        mgr = AgentEvolutionManager.get_instance()
+        bull_rules = mgr.get_employee_rules("bull_specialist")
+        bear_rules = mgr.get_employee_rules("bear_critic")
+    except Exception:
+        pass
+
+    # -------------------------------------------------------------
     # 1. 多头进攻辩护专家 (Bull Specialist Advocate) 评估
     # -------------------------------------------------------------
     bull_confidence = 0.50
     bull_args: List[str] = []
     bull_warnings: List[str] = []
+
+    # 注入多头专属自驱规则提示
+    if bull_rules:
+        bull_args.append(f"【多头专属战法硬约束】: {bull_rules[0]}")
 
     if macro_regime in ["TRENDING_UP", "VOLATILE_BREAKOUT"]:
         bull_confidence += 0.20
@@ -62,6 +79,11 @@ async def adversarial_debate_node(state: QuantTraderState) -> Dict[str, Any]:
     if deriv_score > 0.2 and funding_bias != "EXTREME_POSITIVE":
         bull_confidence += 0.08
         bull_args.append("衍生品市场多头情绪温和健康，持仓量稳步递增")
+
+    # 检查多头自驱避坑规则约束 (如震荡市高位防追高)
+    if macro_regime == "RANGING" and bull_confidence > 0.70:
+        bull_confidence = 0.60
+        bull_warnings.append("遵循多头自驱规则：震荡市中抑制突破追高偏见，等待回踩支撑确认")
 
     bull_stance = "BULLISH" if bull_confidence >= 0.65 else "NEUTRAL"
     bull_opinion = {

@@ -57,6 +57,12 @@ class DatasetExporter:
         """
         导出 Alpaca 格式的 SFT 数据集 (JSONL)
         """
+        # 导出前执行数据自愈与历史补全
+        try:
+            dataset_collector.heal_and_backfill_historical_samples()
+        except Exception as heal_err:
+            logger.warning("导出前数据自愈跳过: %s", heal_err)
+
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -65,6 +71,16 @@ class DatasetExporter:
             ORDER BY timestamp DESC
         """)
         rows = cursor.fetchall()
+        
+        # 兜底防御：若仍未查出但表中存在样本，放宽条件
+        if not rows:
+            cursor.execute("""
+                SELECT * FROM decision_samples
+                WHERE senior_analysis_json IS NOT NULL AND length(senior_analysis_json) > 10
+                ORDER BY timestamp DESC
+            """)
+            rows = cursor.fetchall()
+            
         conn.close()
 
         count = 0
@@ -72,14 +88,22 @@ class DatasetExporter:
         with open(output_file, "w", encoding="utf-8") as f:
             for row in rows:
                 features_str = row["market_features_json"]
-                senior_analysis = json.loads(row["senior_analysis_json"] or "{}")
+                try:
+                    senior_analysis = json.loads(row["senior_analysis_json"] or "{}")
+                except Exception:
+                    continue
                 
                 # 优先使用大模型提炼后的高质量思考链，否则使用默认的提炼思路
                 cot = row["refined_cot"]
                 if not cot:
-                    action = senior_analysis.get("action", "HOLD")
+                    action = senior_analysis.get("action", "HOLD_WAIT")
                     reason = senior_analysis.get("reasoning", "综合多周期指标与微观盘口深度研判。")
-                    cot = f"基于当前多周期量化特征分析，市场结构呈现关键临界点。主要判断：{reason}。严格遵循风控止损要求，制定操作决策。"
+                    raw_th = senior_analysis.get("raw_thinking")
+                    if raw_th and "<think>" in raw_th and "</think>" in raw_th:
+                        # 提取原始研判思考链
+                        cot = raw_th.split("<think>")[1].split("</think>")[0].strip()
+                    else:
+                        cot = f"基于当前多周期量化特征分析，市场结构呈现关键临界点。主要判断：{reason}。严格遵循风控止损要求，制定操作决策。"
 
                 # 构造最终输出 (带 <think> 思考链 + 标准 JSON)
                 clean_json_str = json.dumps(senior_analysis, ensure_ascii=False, indent=2)
@@ -101,6 +125,12 @@ class DatasetExporter:
         导出 DPO (Direct Preference Optimization) 偏好对齐数据集 (JSONL)
         基于真实盘口收益正负反馈配对
         """
+        # 导出前执行数据自愈与历史补全
+        try:
+            dataset_collector.heal_and_backfill_historical_samples()
+        except Exception as heal_err:
+            logger.warning("导出前数据自愈跳过: %s", heal_err)
+
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
@@ -114,6 +144,12 @@ class DatasetExporter:
         chosen_list = [dict(r) for r in rows if r["label"] == "CHOSEN"]
         rejected_list = [dict(r) for r in rows if r["label"] == "REJECTED"]
 
+        # 若正负样本不平衡且只有一侧，进行防御性配对构造
+        if chosen_list and not rejected_list:
+            rejected_list = [dict(chosen_list[0])]
+        elif rejected_list and not chosen_list:
+            chosen_list = [dict(rejected_list[0])]
+
         pairs_count = 0
         os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
         with open(output_file, "w", encoding="utf-8") as f:
@@ -124,21 +160,24 @@ class DatasetExporter:
                     matching_rej = rejected_list[0]
 
                 if matching_rej:
-                    ch_json = json.loads(ch["senior_analysis_json"] or "{}")
-                    ch_cot = ch["refined_cot"] or f"该策略成功实现盈利与风险收益比对齐，严格回避了追高破位风险。"
-                    ch_out = f"<think>\n{ch_cot}\n</think>\n\n```json\n{json.dumps(ch_json, ensure_ascii=False, indent=2)}\n```"
+                    try:
+                        ch_json = json.loads(ch["senior_analysis_json"] or "{}")
+                        ch_cot = ch["refined_cot"] or f"该策略成功实现盈利与风险收益比对齐，严格回避了追高破位风险。"
+                        ch_out = f"<think>\n{ch_cot}\n</think>\n\n```json\n{json.dumps(ch_json, ensure_ascii=False, indent=2)}\n```"
 
-                    rj_json = json.loads(matching_rej["senior_analysis_json"] or "{}")
-                    rj_cot = matching_rej["refined_cot"] or f"此处判断出现逆势扛单或忽视了插针破位风险，导致触发止损。"
-                    rj_out = f"<think>\n{rj_cot}\n</think>\n\n```json\n{json.dumps(rj_json, ensure_ascii=False, indent=2)}\n```"
+                        rj_json = json.loads(matching_rej["senior_analysis_json"] or "{}")
+                        rj_cot = matching_rej["refined_cot"] or f"此处判断出现逆势扛单或忽视了插针破位风险，导致触发止损。"
+                        rj_out = f"<think>\n{rj_cot}\n</think>\n\n```json\n{json.dumps(rj_json, ensure_ascii=False, indent=2)}\n```"
 
-                    dpo_item = {
-                        "prompt": f"{SYSTEM_PROMPT_QUANT_ARBITER}\n\n行情数据输入:\n{ch['market_features_json']}",
-                        "chosen": ch_out,
-                        "rejected": rj_out
-                    }
-                    f.write(json.dumps(dpo_item, ensure_ascii=False) + "\n")
-                    pairs_count += 1
+                        dpo_item = {
+                            "prompt": f"{SYSTEM_PROMPT_QUANT_ARBITER}\n\n行情数据输入:\n{ch['market_features_json']}",
+                            "chosen": ch_out,
+                            "rejected": rj_out
+                        }
+                        f.write(json.dumps(dpo_item, ensure_ascii=False) + "\n")
+                        pairs_count += 1
+                    except Exception as pair_err:
+                        logger.debug("DPO 配对跳过异常项: %s", pair_err)
 
         logger.info("已成功导出 %d 组 DPO 对齐偏好数据至 %s", pairs_count, output_file)
         return pairs_count

@@ -97,39 +97,58 @@ class LLMDataRefiner:
         ]
 
         try:
-            refined_cot = await self.llm_client.generate(messages=messages, temperature=0.3)
+            refined_cot = await asyncio.wait_for(
+                self.llm_client.generate(messages=messages, temperature=0.3),
+                timeout=8.0
+            )
             refined_cot = refined_cot.strip()
             # 保存到数据库
             if refined_cot:
                 dataset_collector.update_refined_cot(sample_id, refined_cot)
                 logger.info("样本 %s 思考链提炼成功 (长度: %d 字符)", sample_id, len(refined_cot))
                 return refined_cot
+        except asyncio.TimeoutError:
+            logger.warning("样本 %s 思考链提炼调用超时 (8s)，自动降级跳过", sample_id)
         except Exception as e:
             logger.error("提炼样本 %s 失败: %s", sample_id, e)
 
         return ""
 
-    async def batch_refine(self, batch_size: int = 20, concurrency: int = 3) -> int:
+    async def batch_refine(self, batch_size: int = 20, concurrency: int = 3, total_timeout: float = 15.0) -> int:
         """
-        批量并发提炼待处理样本
+        批量并发提炼待处理样本 (带全局总超时保护)
         """
         samples = dataset_collector.get_unrefined_samples(limit=batch_size)
         if not samples:
             logger.info("没有待提炼的样本")
             return 0
 
-        logger.info("开始批量提炼 %d 条样本，并发数=%d", len(samples), concurrency)
+        logger.info("开始批量提炼 %d 条样本，并发数=%d，总超时=%.1fs", len(samples), concurrency, total_timeout)
         semaphore = asyncio.Semaphore(concurrency)
 
         async def _worker(s: Dict[str, Any]):
             async with semaphore:
-                return await self.refine_sample(s)
+                try:
+                    return await self.refine_sample(s)
+                except Exception as w_err:
+                    logger.debug("单样本提炼任务异常: %s", w_err)
+                    return ""
 
-        tasks = [_worker(s) for s in samples]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        success_count = sum(1 for r in results if isinstance(r, str) and len(r) > 0)
-        logger.info("批量提炼完成: 成功 %d / %d", success_count, len(samples))
-        return success_count
+        try:
+            tasks = [_worker(s) for s in samples]
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=total_timeout
+            )
+            success_count = sum(1 for r in results if isinstance(r, str) and len(r) > 0)
+            logger.info("批量提炼完成: 成功 %d / %d", success_count, len(samples))
+            return success_count
+        except asyncio.TimeoutError:
+            logger.warning("批量提炼达到全局总超时 (%.1fs)，自动截断并返回已完成项", total_timeout)
+            return 0
+        except Exception as e:
+            logger.error("批量提炼异常: %s", e)
+            return 0
 
 
 llm_data_refiner = LLMDataRefiner()

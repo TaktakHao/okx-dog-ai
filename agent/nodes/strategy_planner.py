@@ -90,28 +90,72 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
     bear_conf = float(bear_opinion.get("confidence", 0.5))
     bear_stance = bear_opinion.get("stance", "NEUTRAL")
 
-    # 3. 首席量化仲裁：计算多智能体共识分 (Consensus Score 0~100)
-    consensus_score = 50
+    # 3. 首席量化仲裁：获取 Softmax 门控网络的体制自适应权重 (Regime-Adaptive Weights)
+    try:
+        from ..evolution.evolution_manager import AgentEvolutionManager
+        manager = AgentEvolutionManager.get_instance()
+        dynamic_weights = manager.gating_network.get_regime_adaptive_weights(macro_regime)
+    except Exception:
+        dynamic_weights = {
+            "bull_specialist": 25.0,
+            "bear_critic": 25.0,
+            "macro_news": 15.0,
+            "onchain_analyst": 15.0,
+            "micro_sniper": 10.0,
+            "chief_arbiter": 10.0,
+        }
+
+    w_bull = dynamic_weights.get("bull_specialist", 25.0) / 100.0
+    w_bear = dynamic_weights.get("bear_critic", 25.0) / 100.0
+    w_onchain = dynamic_weights.get("onchain_analyst", 15.0) / 100.0
+    w_micro = dynamic_weights.get("micro_sniper", 10.0) / 100.0
+    w_macro = dynamic_weights.get("macro_news", 15.0) / 100.0
+
+    consensus_score = 50.0
     if bull_stance == "BULLISH":
-        consensus_score += int(bull_conf * 25)
+        consensus_score += bull_conf * w_bull * 85.0
+    elif bull_stance == "BEARISH":
+        consensus_score -= bull_conf * w_bull * 40.0
+
     if bear_stance == "BEARISH":
-        consensus_score -= int(bear_conf * 25)
+        consensus_score -= bear_conf * w_bear * 85.0
+    elif bear_stance == "BULLISH":
+        consensus_score += bear_conf * w_bear * 30.0
+
     if onchain_score > 0.2:
-        consensus_score += int(onchain_score * 15)
+        consensus_score += onchain_score * w_onchain * 60.0
     elif onchain_score < -0.2:
-        consensus_score -= int(abs(onchain_score) * 15)
+        consensus_score -= abs(onchain_score) * w_onchain * 60.0
+
     if imbalance_ratio > 1.3:
-        consensus_score += 8
+        consensus_score += min(15.0, (imbalance_ratio - 1.0) * w_micro * 50.0)
     elif imbalance_ratio < 0.7:
-        consensus_score -= 8
+        consensus_score -= min(15.0, (1.0 - imbalance_ratio) * w_micro * 50.0)
 
-    # 宏观高危风险惩罚
+    # 宏观市场体制顺势红利
+    if macro_regime == "TRENDING_UP":
+        consensus_score += 5.0
+    elif macro_regime == "TRENDING_DOWN":
+        consensus_score -= 5.0
+
+    # 宏观高危风险惩罚 (受 macro_news 权重缩放)
     if event_risk_level in ["HIGH", "CRITICAL"]:
-        consensus_score = int(consensus_score * 0.7)
+        consensus_score = consensus_score * (0.65 if w_macro >= 0.15 else 0.80)
 
-    consensus_score = max(5, min(95, consensus_score))
+    consensus_score = int(max(5, min(95, round(consensus_score))))
 
-    # 4. 动作判定与准入红线审查 (收紧置信度门槛 >= 0.75)
+    # 4. 动作判定与体制自适应准入红线审查
+    # 单边多头体制放宽至 72 分防踏空；单边空头放宽至 35 分；震荡市收紧至 78/28 防被摩擦锯齿绞杀
+    if macro_regime == "TRENDING_UP":
+        long_threshold = 72
+        short_threshold = 28
+    elif macro_regime == "TRENDING_DOWN":
+        long_threshold = 78
+        short_threshold = 36
+    else:  # RANGING or VOLATILE_BREAKOUT
+        long_threshold = 76
+        short_threshold = 30
+
     action = "HOLD_WAIT"
     confidence = 0.50
     urgency = "LOW"
@@ -143,54 +187,56 @@ async def strategy_planning_node(state: QuantTraderState) -> Dict[str, Any]:
         urgency = "LOW"
         intent = "WAIT_OBSERVE"
         strategy_rationale = f"触发波动率挤压保护: {squeeze_msg}，收敛为防守观望"
-    elif macro_regime == "TRENDING_UP" and (cex_netflow > 15_000_000 or has_unlock_risk or onchain_score <= -0.4):
+    elif macro_regime == "TRENDING_UP" and (cex_netflow > 20_000_000 or has_unlock_risk or onchain_score <= -0.5):
         action = "HOLD_WAIT"
         confidence = 0.55
         urgency = "LOW"
         intent = "WAIT_OBSERVE"
-        strategy_rationale = f"检测到链上大额充币/抛压风险 (CEX净流入=${cex_netflow/1e6:.1f}M)，警惕诱多洗盘"
-    elif macro_regime == "TRENDING_UP" and fr_bias == "EXTREME_POSITIVE" and deriv_score > 0.6:
+        strategy_rationale = f"检测到链上大额充币/严重抛压风险 (CEX净流入=${cex_netflow/1e6:.1f}M)，警惕诱多洗盘"
+    elif macro_regime == "TRENDING_UP" and fr_bias == "EXTREME_POSITIVE" and deriv_score > 0.75:
         action = "HOLD_WAIT"
         confidence = 0.58
         urgency = "LOW"
         intent = "WAIT_OBSERVE"
         strategy_rationale = "衍生品资金费率极度过热，多头杠杆拥挤，防范踩踏插针"
-    elif consensus_score >= 75:
-        calc_conf = round(min(0.95, 0.75 + (consensus_score - 75) * 0.01), 2)
-        if calc_conf >= 0.75:
+    elif consensus_score >= long_threshold:
+        calc_conf = round(min(0.95, 0.72 + (consensus_score - long_threshold) * 0.015), 2)
+        if calc_conf >= 0.72:
             action = "BUY_LONG"
             confidence = calc_conf
             urgency = "MEDIUM"
             is_approved_by_arbiter = True
             strategy_rationale = (
-                f"多智能体强共识做多 (共识分={consensus_score}/100, 战术意图={intent}) + 链上资金偏好({onchain_bias}) + 盘口支撑({imbalance_ratio:.2f})"
+                f"[{macro_regime}体制自适应] 强共识做多 (共识分={consensus_score}/100 >= {long_threshold}, 战术意图={intent}) + "
+                f"多头加权权重({w_bull*100:.0f}%) + 链上资金({onchain_bias})"
             )
         else:
             action = "HOLD_WAIT"
             confidence = calc_conf
             intent = "WAIT_OBSERVE"
-            strategy_rationale = f"仲裁置信度 ({calc_conf}) 未达 0.75 红线，转为观望"
-    elif consensus_score <= 30:
-        calc_conf = round(min(0.95, 0.75 + (30 - consensus_score) * 0.01), 2)
-        if calc_conf >= 0.75:
+            strategy_rationale = f"仲裁置信度 ({calc_conf}) 未达 0.72 红线，转为观望"
+    elif consensus_score <= short_threshold:
+        calc_conf = round(min(0.95, 0.72 + (short_threshold - consensus_score) * 0.015), 2)
+        if calc_conf >= 0.72:
             action = "SELL_SHORT"
             confidence = calc_conf
             urgency = "MEDIUM"
             is_approved_by_arbiter = True
             strategy_rationale = (
-                f"多智能体强共识做空 (共识分={consensus_score}/100, 战术意图={intent}) + 空头破位({onchain_bias}) + 盘口压制"
+                f"[{macro_regime}体制自适应] 强共识做空 (共识分={consensus_score}/100 <= {short_threshold}, 战术意图={intent}) + "
+                f"风控红队加权({w_bear*100:.0f}%) + 盘口压制"
             )
         else:
             action = "HOLD_WAIT"
             confidence = calc_conf
             intent = "WAIT_OBSERVE"
-            strategy_rationale = f"仲裁置信度 ({calc_conf}) 未达 0.75 红线，转为观望"
+            strategy_rationale = f"仲裁置信度 ({calc_conf}) 未达 0.72 红线，转为观望"
     else:
         action = "HOLD_WAIT"
         confidence = 0.55
         urgency = "LOW"
         intent = "WAIT_OBSERVE"
-        strategy_rationale = f"首席仲裁共识分 ({consensus_score}/100) 未达准入红线 (≥75 或 ≤30)，保持观望"
+        strategy_rationale = f"首席仲裁共识分 ({consensus_score}/100) 未达[{macro_regime}]体制准入红线 (≥{long_threshold} 或 ≤{short_threshold})，保持观望"
 
     # 5. 点位规划推导 (ATR 乘数 + 摩擦与反思修正)
     atr_multiplier = 1.8

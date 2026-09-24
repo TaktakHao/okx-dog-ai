@@ -151,11 +151,12 @@ class ConsensusOrchestrator:
         bear_op = self.bear_agent.evaluate(snapshot)
         macro_op = self.macro_agent.evaluate(snapshot, news_items)
 
-        # 2. 仲裁打分 (基于 Softmax 动态加权门控网络)
+        # 2. 仲裁打分 (基于市场体制自适应 Softmax 门控网络动态加权)
+        regime = snapshot.get("market_regime", "RANGING")
         try:
             from .evolution.evolution_manager import AgentEvolutionManager
             manager = AgentEvolutionManager.get_instance()
-            weights = manager.gating_network.get_weights()
+            weights = manager.gating_network.get_regime_adaptive_weights(regime)
             w_bull = weights.get("bull_specialist", 25.0) / 100.0
             w_bear = weights.get("bear_critic", 25.0) / 100.0
             w_macro = weights.get("macro_news", 15.0) / 100.0
@@ -167,38 +168,47 @@ class ConsensusOrchestrator:
         # 基础中性分 50
         net_delta = 0.0
         if bull_op.stance == "BULLISH":
-            net_delta += bull_op.confidence * w_bull * 80.0
+            net_delta += bull_op.confidence * w_bull * 85.0
         elif bull_op.stance == "BEARISH":
             net_delta -= bull_op.confidence * w_bull * 40.0
 
         if bear_op.stance == "BEARISH":
-            net_delta -= bear_op.confidence * w_bear * 80.0
+            net_delta -= bear_op.confidence * w_bear * 85.0
         elif bear_op.stance == "BULLISH":
             net_delta += bear_op.confidence * w_bear * 30.0
 
         if macro_op.stance == "BULLISH":
             net_delta += macro_op.confidence * w_macro * 50.0
         elif macro_op.stance == "BEARISH":
-            net_delta -= macro_op.confidence * w_macro * 60.0
+            net_delta -= macro_op.confidence * w_macro * 65.0
+
+        # 体制红利调节：单边顺势行情奖励，震荡行情收敛
+        if regime == "TRENDING_UP":
+            net_delta += 6.0
+        elif regime == "TRENDING_DOWN":
+            net_delta -= 6.0
 
         score = int(max(10, min(95, 50 + net_delta)))
 
-        # 3. 动作判定与准入红线
+        # 3. 动作判定与准入红线 (依市场体制动态调整阈值，单边市适度放宽防踏空，震荡市收紧防摩擦)
+        long_threshold = 72 if regime == "TRENDING_UP" else 76
+        short_threshold = 38 if regime == "TRENDING_DOWN" else 32
+
         final_action = SignalAction.HOLD_WAIT
         rejection_reason = None
 
-        if score >= 75:
+        if score >= long_threshold:
             final_action = SignalAction.BUY_LONG
-        elif score <= 35:
+        elif score <= short_threshold:
             final_action = SignalAction.SELL_SHORT
 
         is_approved = True
         if is_in_cooldown:
             is_approved = False
             rejection_reason = "系统处于交易心理防上头强制冷静期，硬阻断开仓"
-        elif score < 75 and score > 35:
+        elif score < long_threshold and score > short_threshold:
             is_approved = False
-            rejection_reason = f"首席仲裁共识分 ({score}) 未达开仓准入红线 (≥75 或 ≤35)，建议维持观望"
+            rejection_reason = f"首席仲裁共识分 ({score}) 未达当前[{regime}]体制准入红线 (做多≥{long_threshold} 或 做空≤{short_threshold})，建议维持观望"
 
         # 4. 生成建议交易计划
         atr = price * 0.015

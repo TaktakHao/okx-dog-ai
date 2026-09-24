@@ -137,6 +137,65 @@ class SoftmaxGatingNetwork:
         """获取当前决策话语权百分比字典"""
         return dict(self._weights)
 
+    def get_regime_adaptive_weights(self, market_regime: str = "RANGING") -> Dict[str, float]:
+        """
+        根据当前宏观市场体制 (Market Regime) 对基础门控权重进行动态体制倾斜放大：
+        1. TRENDING_UP (单边多头): 放大冲锋多头 (bull_specialist) 与链上资金 (onchain_analyst) 权重，抑制红队盲目抄底做空；
+        2. TRENDING_DOWN (单边空头): 放大铁血风控 (bear_critic) 权重，严防盲目抄底接飞刀；
+        3. RANGING (震荡整理): 放大微观盘口狙击 (micro_sniper) 与风控 (bear_critic)，打压趋势突破；
+        4. VOLATILE_BREAKOUT (剧烈突破): 放大宏观情报 (macro_news) 与仲裁官 (chief_arbiter) 避险权限。
+        """
+        regime = str(market_regime).upper()
+        base_weights = dict(self._weights)
+
+        # 体制偏置乘数 (Regime Multipliers)
+        regime_multipliers = {
+            "TRENDING_UP": {
+                "bull_specialist": 1.45,
+                "bear_critic": 0.70,
+                "macro_news": 0.90,
+                "onchain_analyst": 1.25,
+                "micro_sniper": 0.85,
+                "chief_arbiter": 1.00,
+            },
+            "TRENDING_DOWN": {
+                "bull_specialist": 0.65,
+                "bear_critic": 1.45,
+                "macro_news": 1.10,
+                "onchain_analyst": 1.10,
+                "micro_sniper": 0.85,
+                "chief_arbiter": 1.00,
+            },
+            "RANGING": {
+                "bull_specialist": 0.85,
+                "bear_critic": 1.15,
+                "macro_news": 0.80,
+                "onchain_analyst": 0.85,
+                "micro_sniper": 1.50,
+                "chief_arbiter": 1.10,
+            },
+            "VOLATILE_BREAKOUT": {
+                "bull_specialist": 1.10,
+                "bear_critic": 1.20,
+                "macro_news": 1.40,
+                "onchain_analyst": 0.90,
+                "micro_sniper": 1.10,
+                "chief_arbiter": 1.25,
+            },
+        }
+
+        mults = regime_multipliers.get(regime, {r: 1.0 for r in self.DEFAULT_ROLES})
+
+        # 加权调整
+        adjusted = {r: max(5.0, base_weights.get(r, 16.6) * mults.get(r, 1.0)) for r in self.DEFAULT_ROLES}
+        tot = sum(adjusted.values())
+        norm_weights = {r: round((adjusted[r] / tot) * 100.0, 1) for r in self.DEFAULT_ROLES}
+        delta = round(100.0 - sum(norm_weights.values()), 1)
+        if delta != 0 and self.DEFAULT_ROLES:
+            norm_weights[self.DEFAULT_ROLES[0]] = round(norm_weights[self.DEFAULT_ROLES[0]] + delta, 1)
+
+        return norm_weights
+
     def get_role_weight(self, role_id: str, default: float = 20.0) -> float:
         """获取单个角色话语权"""
         return self._weights.get(role_id, default)

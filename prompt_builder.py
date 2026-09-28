@@ -108,6 +108,9 @@ class MarketPromptBuilder:
    - 资金自适应仓位：交易方案必须严格基于当前账户实际可用 USDT (account_balance_usdt) 进行风险预算，单笔止损敞口严格控制在可用资金的 1%~3%。
    - 严禁无止损开仓：必须给出基于 ATR(14) 或关键技术位的硬止损 stop_loss_price。
    - 盈亏比门槛：建议方案的第一止盈位盈亏比 (R:R Ratio) 必须 ≥ 1.5。不足 1.5 建议 HOLD_WAIT。
+   - 强平穿透防御 (DCA Liquidation Guard)：严禁在强平价外侧或过度接近强平价 (缓冲 < 3%) 时发出逆势补仓建议；若持仓面临穿仓风险必须建议减仓降敞口。
+   - 卡尔曼协整对冲 (Kalman Arbitrage)：当资产对价差偏离达到 |Z-Score| >= 2.0 且大盘震荡时，优先考虑对冲套利而非单边追涨杀跌。
+   - 真实摩擦成本防御：必须考虑交易所双边至少 0.07%~0.10% 的手续费与滑点磨损，拒绝预期收益不足以覆盖摩擦成本的超微利噪音交易。
    - 分阶段止盈：TP1 建议平仓 50% 并提示移动保本 (Breakeven Locked)。
    - 明确失效条件：清晰界定价格跌破/突破何处时逻辑证伪。
 5. 输出格式要求:
@@ -241,6 +244,22 @@ class MarketPromptBuilder:
             f"持仓: {pos_str} | 账户可用资金: {avail_u:.2f} USDT | 风控限额: 单笔≤{max_order}U, 杠杆≤{max_lev}x",
             f"4H主趋势: {trend_4h} (EMA20={_fmt_p(e20_4h, price)}, EMA50={_fmt_p(e50_4h, price)})",
         ]
+
+        # 融合 oke_auto_trade 高级数理边界变量 (DCA强平穿透预判 & 卡尔曼配对套利)
+        kalman = data.get("kalman_pair_metrics")
+        dca_safe = data.get("dca_liquidation_analysis")
+        math_lines = []
+        if dca_safe:
+            buf = dca_safe.get("liq_safety_buffer_pct", 0.0)
+            status_str = "安全" if dca_safe.get("is_safe", True) else f"穿仓预警({dca_safe.get('violation_reason')})"
+            math_lines.append(f"DCA强平缓冲: {buf}% [{status_str}], 极限30%承压保证金: {dca_safe.get('required_extreme_margin', 0.0)}U")
+        if kalman:
+            z_sc = kalman.get("spread_z_score", 0.0)
+            action = kalman.get("suggested_arbitrage_action", "NONE")
+            math_lines.append(f"卡尔曼对冲({kalman.get('main_symbol')}/{kalman.get('sub_symbol')}) Z-Score: {z_sc:+.2f}, 套利动作: {action}")
+        if math_lines:
+            lines.append("【数理真实边界】: " + " | ".join(math_lines))
+
         if scenario == "anomaly" or data.get("is_anomaly_mode"):
             lines.append(f"【盘面异动】: {data.get('anomaly_desc') or '检测到短线放量异动'}")
         lines.append("</p0_context>")

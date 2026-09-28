@@ -294,3 +294,48 @@ class SSEStreamChunk(BaseModel):
 
 # 别名兼容
 AICoTStreamEvent = SSEStreamChunk
+
+
+# =============================================================================
+# 5. 高级数理量化与风控分析契约 (源自 oke_auto_trade 优势融合)
+# =============================================================================
+
+class DcaLiquidationAnalysis(BaseModel):
+    """DCA 与网格动态强平线穿透预判与保证金精算结果"""
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_safe: bool = Field(..., description="加仓链条是否安全 (是否存在未决穿仓死穴)")
+    max_safe_dca_orders: int = Field(..., description="最大安全可加仓轮数")
+    breakeven_price: float = Field(..., description="加仓后的持仓保本均价")
+    current_liq_price: float = Field(..., description="当前持仓强平价")
+    next_dca_liq_price: float = Field(..., description="下一档加仓后的推导强平价")
+    next_order_price: float = Field(..., description="下一档计划加仓触发价")
+    liq_safety_buffer_pct: float = Field(..., description="距离强平价的安全缓冲百分比 (%)")
+    required_extreme_margin: float = Field(..., description="承受 30% 极端逆势波动所需总隔离保证金 (USDT)")
+    violation_reason: Optional[str] = Field(None, description="强平穿透拦截原因说明")
+
+
+class KalmanPairMetrics(BaseModel):
+    """卡尔曼滤波动态协整配对与对冲套利指标"""
+    model_config = ConfigDict(populate_by_name=True)
+
+    main_symbol: str = Field(..., description="配对主资产 (例如 BTC-USDT-SWAP)")
+    sub_symbol: str = Field(..., description="配对从属资产 (例如 ETH-USDT-SWAP)")
+    dynamic_beta: float = Field(..., description="卡尔曼滤波动态对冲斜率 Beta")
+    dynamic_alpha: float = Field(..., description="卡尔曼滤波动态截距 Alpha")
+    spread_z_score: float = Field(..., description="当前残差价差归一化 Z-Score")
+    covariance_trace: float = Field(..., description="协方差矩阵迹 Tr(P)，监控协整健康度")
+    is_divergent: bool = Field(..., description="是否协整破裂发散 (触发对冲熔断)")
+    suggested_arbitrage_action: str = Field("NONE", description="配对套利建议动作: NONE / LONG_SUB_SHORT_MAIN / SHORT_SUB_LONG_MAIN / CLOSE")
+
+
+class StrategyPlateauScore(BaseModel):
+    """策略参数平原与生死线抗过拟合质量评分"""
+    model_config = ConfigDict(populate_by_name=True)
+
+    is_plateau_qualified: bool = Field(..., description="是否通过参数平原与生死线过滤")
+    drop_top3_decay: float = Field(..., description="剔除 Top3 暴利单后的收益保留率 (要求 >= 0.50)")
+    fee_to_gross_ratio: float = Field(..., description="手续费占毛利润比例 (要求 < 0.40)")
+    friction_stress_pnl: float = Field(..., description="双边 40bps 滑点摩擦压力测试后的净期望 (USDT)")
+    neighbor_stability_score: float = Field(..., description="邻域 +/-20% 参数平原稳定性得分 (0-100)")
+

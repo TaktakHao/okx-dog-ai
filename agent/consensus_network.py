@@ -16,11 +16,24 @@ import uuid
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from models import (
-    AgentDebateOpinion,
-    MultiAgentConsensusResponse,
-    SignalAction,
-)
+try:
+    from models import (
+        AgentDebateOpinion,
+        MultiAgentConsensusResponse,
+        SignalAction,
+    )
+except ImportError:
+    import sys
+    from pathlib import Path
+    backend_dir = Path(__file__).resolve().parent.parent.parent / "okx-dog-backend"
+    if str(backend_dir) not in sys.path:
+        sys.path.insert(0, str(backend_dir))
+    from models import (
+        AgentDebateOpinion,
+        MultiAgentConsensusResponse,
+        SignalAction,
+    )
+
 
 logger = logging.getLogger("okx_dog.ai.consensus_network")
 

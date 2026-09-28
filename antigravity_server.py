@@ -413,6 +413,79 @@ async def websocket_stream_endpoint(websocket: WebSocket):
         logger.warning(f"[WebSocket] 异常关闭: {e}")
 
 
+
+# =============================================================================
+# Paperclip 虚拟量化公司与 CFO 战绩配额控制平面路由
+# =============================================================================
+
+@app.get("/api/v1/paperclip/org", summary="获取虚拟量化公司组织架构与 6 大员工资料")
+async def get_paperclip_org():
+    """返回符合 Paperclip 规范的组织架构、CEO 及在册员工清单"""
+    try:
+        from agent.paperclip_adapter import paperclip_adapter
+    except ImportError:
+        from .agent.paperclip_adapter import paperclip_adapter
+    return paperclip_adapter.get_company_org()
+
+
+@app.get("/api/v1/paperclip/quota/overview", summary="获取团队及员工剩余可用奖励额度概览")
+async def get_paperclip_quota_overview():
+    """返回长期主义战绩积分、累计奖金池与当前员工剩余额度"""
+    try:
+        from agent.evolution.cfo_performance_manager import CfoPerformanceManager
+    except ImportError:
+        from .agent.evolution.cfo_performance_manager import CfoPerformanceManager
+    cfo = CfoPerformanceManager.get_instance()
+    return cfo.get_company_quota_overview()
+
+
+@app.post("/api/v1/paperclip/task/anomaly", summary="接收指标哨兵异动事件并触发投决会仲裁工单")
+async def trigger_paperclip_anomaly_task(request: Request):
+    """
+    接收来自 OKX-Dog 哨兵的异动事件，唤醒 6 大员工红蓝对抗博弈，
+    若有员工拥有战绩奖励则自动解锁深度思考链，输出仲裁决议。
+    """
+    try:
+        from agent.paperclip_adapter import paperclip_adapter, MarketAnomalyTriggerRequest
+    except ImportError:
+        from .agent.paperclip_adapter import paperclip_adapter, MarketAnomalyTriggerRequest
+
+    body = await request.json()
+    req = MarketAnomalyTriggerRequest(**body)
+    return await paperclip_adapter.handle_anomaly_event(req)
+
+
+@app.post("/api/v1/paperclip/reward/trade", summary="实盘平仓盈利向立功员工派发战绩奖励")
+async def reward_trade_profit(request: Request):
+    """平仓产生真实利润时，向多头冲锋员与执行 CEO 派发 Tokens 奖励"""
+    try:
+        from agent.evolution.cfo_performance_manager import CfoPerformanceManager
+    except ImportError:
+        from .agent.evolution.cfo_performance_manager import CfoPerformanceManager
+    cfo = CfoPerformanceManager.get_instance()
+    body = await request.json()
+    trade_id = body.get("trade_id", f"tr_{int(time.time())}")
+    pnl_usdt = float(body.get("pnl_usdt", 0.0))
+    side = body.get("side", "LONG")
+    cfo.reward_trade_profit(trade_id=trade_id, pnl_usdt=pnl_usdt, side=side)
+    return {"status": "ok", "message": f"战绩奖励派发结算完成: +{pnl_usdt:.2f} USDT"}
+
+
+@app.post("/api/v1/paperclip/reward/hedge", summary="空头风控专家成功排雷避险奖励")
+async def reward_hedge(request: Request):
+    """成功识别假突破、排雷阻断重大亏损时，向空头专家派发避险奖金"""
+    try:
+        from agent.evolution.cfo_performance_manager import CfoPerformanceManager
+    except ImportError:
+        from .agent.evolution.cfo_performance_manager import CfoPerformanceManager
+    cfo = CfoPerformanceManager.get_instance()
+    body = await request.json()
+    symbol = body.get("symbol", "BTC-USDT-SWAP")
+    reason = body.get("reason", "成功识别假突破")
+    cfo.record_successful_hedge(symbol=symbol, reason=reason)
+    return {"status": "ok", "message": f"避险排雷奖励派发完成: {symbol}"}
+
+
 # =============================================================================
 # CLI 独立启动入口
 # =============================================================================

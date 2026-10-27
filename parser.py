@@ -416,8 +416,21 @@ class RobustJSONParser:
         if "symbol" not in res or not res["symbol"]:
             res["symbol"] = symbol
 
-        if "timestamp" not in res:
-            res["timestamp"] = int(datetime.utcnow().timestamp() * 1000)
+        if "timestamp" not in res or not isinstance(res["timestamp"], (int, float)):
+            raw_ts = res.get("timestamp")
+            if isinstance(raw_ts, str):
+                try:
+                    if raw_ts.isdigit():
+                        res["timestamp"] = int(raw_ts)
+                    else:
+                        dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                        res["timestamp"] = int(dt.timestamp() * 1000)
+                except Exception:
+                    res["timestamp"] = int(datetime.utcnow().timestamp() * 1000)
+            else:
+                res["timestamp"] = int(datetime.utcnow().timestamp() * 1000)
+        else:
+            res["timestamp"] = int(res["timestamp"])
 
         # 2. market_regime 模糊自愈
         reg_val = str(res.get("market_regime") or res.get("market_state") or "").upper()
@@ -569,13 +582,23 @@ class RobustJSONParser:
         ra["max_holding_time_hours"] = float(ra.get("max_holding_time_hours", 24.0))
         res["risk_assessment"] = ra
 
-        # 8. reasoning 推理与总结说明
+        # 8. reasoning 推理与总结说明 (兼容模型返回 dict/list 格式的推理详情)
         if "rationale" in res and "reasoning_details" not in res:
             res["reasoning_details"] = res.pop("rationale")
         if "reasoning_summary" not in res or not res["reasoning_summary"]:
             res["reasoning_summary"] = str(res.get("reasoning", "系统完成全周期与盘口微观推演，严格遵循交易纪律。"))
+        elif not isinstance(res["reasoning_summary"], str):
+            res["reasoning_summary"] = json.dumps(res["reasoning_summary"], ensure_ascii=False)
+
         if "reasoning_details" not in res or not res["reasoning_details"]:
             res["reasoning_details"] = "综合 15m/1h/4h 技术均线、订单簿深度与衍生品持仓推导完成。"
+        elif not isinstance(res["reasoning_details"], str):
+            if isinstance(res["reasoning_details"], dict):
+                res["reasoning_details"] = "；".join(f"{k}: {v}" for k, v in res["reasoning_details"].items())
+            elif isinstance(res["reasoning_details"], list):
+                res["reasoning_details"] = "；".join(str(x) for x in res["reasoning_details"])
+            else:
+                res["reasoning_details"] = str(res["reasoning_details"])
 
         return res
 

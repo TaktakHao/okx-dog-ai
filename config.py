@@ -6,8 +6,15 @@ OKX-Dog 量化与 AI 研判决策中枢 - 模型配置模块
 
 from pathlib import Path
 from typing import Literal, Optional
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    BaseSettings = BaseModel  # type: ignore
+
+    def SettingsConfigDict(**kwargs):  # type: ignore
+        return ConfigDict(extra=kwargs.get("extra", "ignore"))
 
 AI_DIR = Path(__file__).resolve().parent
 ROOT_DIR = AI_DIR.parent
